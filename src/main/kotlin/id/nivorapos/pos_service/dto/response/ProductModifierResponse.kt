@@ -6,6 +6,7 @@ data class ProductModifierResponse(
     val id: Long,
     val name: String,
     val additionalPrice: BigDecimal,
+    val isStock: Boolean,
     val isActive: Boolean
 )
 

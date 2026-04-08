@@ -29,6 +29,9 @@ class ProductVariant(
     @Column(name = "is_active")
     var isActive: Boolean = true,
 
+    @Column(name = "is_stock")
+    var isStock: Boolean = true,
+
     @Column(name = "created_by")
     var createdBy: String? = null,
 

@@ -35,6 +35,7 @@ data class ProductResponse(
     val isPriceIncludeTax: Boolean,
     val qty: Int,
     val isActive: Boolean,
+    val isStock: Boolean,
     val merchantName: String?,
     val createdDate: LocalDateTime?,
     val isTaxable: Boolean,

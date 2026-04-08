@@ -15,6 +15,7 @@ data class ProductRequest(
     val basePrice: BigDecimal? = null,
     val isTaxable: Boolean = false,
     val taxId: Long? = null,
+    val isStock: Boolean = true,
     val qty: Int = 0,
     val categoryIds: List<Long> = emptyList()
 )

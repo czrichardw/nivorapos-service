@@ -108,6 +108,7 @@ class ProductService(
             basePrice = request.basePrice ?: request.price,
             isTaxable = request.isTaxable,
             taxId = request.taxId,
+            isStock = request.isStock,
             createdBy = username,
             createdDate = now,
             modifiedBy = username,
@@ -115,8 +116,8 @@ class ProductService(
         )
         val saved = productRepository.save(product)
 
-        // Stok awal hanya untuk SIMPLE dan MODIFIER; VARIANT dikelola per varian
-        if (productType != "VARIANT") {
+        // Stok awal hanya untuk SIMPLE dan MODIFIER yang isStock=true; VARIANT dikelola per varian
+        if (productType != "VARIANT" && request.isStock) {
             val stock = Stock(
                 productId = saved.id,
                 qty = request.qty,
@@ -172,6 +173,7 @@ class ProductService(
         product.isTaxable = request.isTaxable
         product.taxId = request.taxId
         product.isActive = request.isActive
+        product.isStock = request.isStock
         product.modifiedBy = username
         product.modifiedDate = now
 
@@ -303,6 +305,7 @@ class ProductService(
             name = request.name,
             additionalPrice = request.additionalPrice,
             sku = request.sku,
+            isStock = request.isStock,
             createdBy = username,
             createdDate = now,
             modifiedBy = username,
@@ -310,17 +313,19 @@ class ProductService(
         )
         val saved = productVariantRepository.save(variant)
 
-        // Buat stock record per variant
-        val stock = Stock(
-            productId = productId,
-            variantId = saved.id,
-            qty = request.qty,
-            createdBy = username,
-            createdDate = now,
-            modifiedBy = username,
-            modifiedDate = now
-        )
-        stockRepository.save(stock)
+        // Buat stock record hanya jika isStock=true
+        if (request.isStock) {
+            val stock = Stock(
+                productId = productId,
+                variantId = saved.id,
+                qty = request.qty,
+                createdBy = username,
+                createdDate = now,
+                modifiedBy = username,
+                modifiedDate = now
+            )
+            stockRepository.save(stock)
+        }
 
         return ApiResponse.success("Variant created", buildVariantResponse(saved))
     }
@@ -340,6 +345,7 @@ class ProductService(
         variant.name = request.name
         variant.additionalPrice = request.additionalPrice
         variant.sku = request.sku
+        variant.isStock = request.isStock
         variant.modifiedBy = SecurityUtils.getUsernameFromContext()
         variant.modifiedDate = LocalDateTime.now()
 
@@ -443,6 +449,7 @@ class ProductService(
             modifierGroupId = request.modifierGroupId,
             name = request.name,
             additionalPrice = request.additionalPrice,
+            isStock = request.isStock,
             createdBy = username,
             createdDate = now,
             modifiedBy = username,
@@ -460,6 +467,7 @@ class ProductService(
 
         modifier.name = request.name
         modifier.additionalPrice = request.additionalPrice
+        modifier.isStock = request.isStock
         modifier.modifiedBy = SecurityUtils.getUsernameFromContext()
         modifier.modifiedDate = LocalDateTime.now()
 
@@ -498,8 +506,9 @@ class ProductService(
         val basePrice = product.basePrice ?: product.price
         val productCategories = productCategoryRepository.findByProductId(product.id)
 
-        val qty = when (product.productType) {
-            "VARIANT" -> stockRepository.findAllByProductId(product.id).sumOf { it.qty }
+        val qty = when {
+            !product.isStock -> 0
+            product.productType == "VARIANT" -> stockRepository.findAllByProductId(product.id).sumOf { it.qty }
             else -> stockRepository.findByProductIdAndVariantIdIsNull(product.id).map { it.qty }.orElse(0)
         }
 
@@ -558,6 +567,7 @@ class ProductService(
             isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true,
             qty = qty,
             isActive = product.isActive,
+            isStock = product.isStock,
             merchantName = merchant?.merchantName ?: merchant?.name,
             createdDate = product.createdDate,
             isTaxable = product.isTaxable,
@@ -583,13 +593,15 @@ class ProductService(
     }
 
     private fun buildVariantResponse(variant: ProductVariant): ProductVariantResponse {
-        val qty = stockRepository.findByProductIdAndVariantId(variant.productId, variant.id)
-            .map { it.qty }.orElse(0)
+        val qty = if (variant.isStock) {
+            stockRepository.findByProductIdAndVariantId(variant.productId, variant.id).map { it.qty }.orElse(0)
+        } else 0
         return ProductVariantResponse(
             id = variant.id,
             name = variant.name,
             additionalPrice = variant.additionalPrice,
             sku = variant.sku,
+            isStock = variant.isStock,
             qty = qty,
             isActive = variant.isActive
         )
@@ -615,6 +627,7 @@ class ProductService(
             id = modifier.id,
             name = modifier.name,
             additionalPrice = modifier.additionalPrice,
+            isStock = modifier.isStock,
             isActive = modifier.isActive
         )
     }

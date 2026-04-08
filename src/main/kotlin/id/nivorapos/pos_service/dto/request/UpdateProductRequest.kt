@@ -16,5 +16,6 @@ data class UpdateProductRequest(
     val isTaxable: Boolean = false,
     val taxId: Long? = null,
     val categoryIds: List<Long> = emptyList(),
-    val isActive: Boolean = true
+    val isActive: Boolean = true,
+    val isStock: Boolean = true
 )

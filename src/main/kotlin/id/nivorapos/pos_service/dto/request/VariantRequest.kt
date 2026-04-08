@@ -7,5 +7,6 @@ data class VariantRequest(
     val name: String,
     val additionalPrice: BigDecimal = BigDecimal.ZERO,
     val sku: String? = null,
+    val isStock: Boolean = true,
     val qty: Int = 0
 )

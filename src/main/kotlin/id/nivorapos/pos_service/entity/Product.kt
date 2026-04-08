@@ -59,6 +59,9 @@ class Product(
     @Column(name = "is_active")
     var isActive: Boolean = true,
 
+    @Column(name = "is_stock")
+    var isStock: Boolean = true,
+
     @Column(name = "deleted_by")
     var deletedBy: String? = null,
 
