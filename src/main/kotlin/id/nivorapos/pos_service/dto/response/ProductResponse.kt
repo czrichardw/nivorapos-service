@@ -25,6 +25,7 @@ data class ProductCategoryResponse(
 data class ProductResponse(
     val id: Long,
     val name: String,
+    val productType: String,
     val sku: String?,
     val upc: String?,
     val description: String?,
@@ -33,10 +34,14 @@ data class ProductResponse(
     val finalPrice: BigDecimal,
     val isPriceIncludeTax: Boolean,
     val qty: Int,
+    val isActive: Boolean,
+    val isStock: Boolean,
     val merchantName: String?,
     val createdDate: LocalDateTime?,
     val isTaxable: Boolean,
     val tax: ProductTaxResponse?,
     val categories: List<ProductCategoryResponse>,
-    val productImages: List<ProductImageResponse>
+    val productImages: List<ProductImageResponse>,
+    val variantGroups: List<ProductVariantGroupResponse>,
+    val modifiers: List<ProductModifierResponse>
 )

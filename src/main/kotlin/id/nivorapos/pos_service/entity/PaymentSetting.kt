@@ -35,6 +35,10 @@ class PaymentSetting(
     @Column(name = "service_charge_amount", precision = 19, scale = 2)
     var serviceChargeAmount: BigDecimal = BigDecimal.ZERO,
 
+    /** BEFORE_TAX | AFTER_TAX | DPP | AFTER_DISCOUNT */
+    @Column(name = "service_charge_source")
+    var serviceChargeSource: String? = null,
+
     @Column(name = "is_tax")
     var isTax: Boolean = false,
 

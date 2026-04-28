@@ -23,6 +23,11 @@ data class TransactionRequest(
     val queueNumber: String? = null,
     val paymentSource: String? = null,
     val paymentReference: String? = null,
+    /** Diskon: kirim salah satu (id atau code). Server akan validasi & hitung ulang. */
+    val discountId: Long? = null,
+    val discountCode: String? = null,
+    val customerId: Long? = null,
+
     @JsonAlias("transactionItems")
     val items: List<TransactionItemRequest> = emptyList()
 )

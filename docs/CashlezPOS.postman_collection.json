@@ -48,6 +48,26 @@
       "key": "payment_setting_id",
       "value": "1",
       "type": "string"
+    },
+    {
+      "key": "variant_group_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "variant_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "modifier_group_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "modifier_id",
+      "value": "1",
+      "type": "string"
     }
   ],
   "auth": {
@@ -250,7 +270,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Kopi Susu\",\n  \"price\": 15000.0,\n  \"sku\": \"SKU-001\",\n  \"upc\": \"UPC-001\",\n  \"imageUrl\": \"https://virellon.cashup.id/images/sample.jpg\",\n  \"imageThumbUrl\": \"https://virellon.cashup.id/images/sample_thumb.jpg\",\n  \"description\": \"Kopi susu nikmat\",\n  \"qty\": 100,\n  \"categoryIds\": [1, 2]\n}",
+              "raw": "{\n  \"name\": \"Kopi Susu\",\n  \"price\": 15000.0,\n  \"sku\": \"SKU-001\",\n  \"upc\": \"UPC-001\",\n  \"imageUrl\": \"https://virellon.cashup.id/images/sample.jpg\",\n  \"imageThumbUrl\": \"https://virellon.cashup.id/images/sample_thumb.jpg\",\n  \"description\": \"Kopi susu nikmat\",\n  \"qty\": 100,\n  \"productType\": \"SIMPLE\",\n  \"isStock\": true,\n  \"categoryIds\": [1, 2]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -291,7 +311,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"productId\": 1,\n  \"name\": \"Kopi Susu Updated\",\n  \"price\": 18000.0,\n  \"sku\": \"SKU-001\",\n  \"upc\": \"UPC-001\",\n  \"imageUrl\": \"https://virellon.cashup.id/images/sample.jpg\",\n  \"imageThumbUrl\": \"https://virellon.cashup.id/images/sample_thumb.jpg\",\n  \"description\": \"Kopi susu nikmat updated\",\n  \"categoryIds\": [1]\n}",
+              "raw": "{\n  \"productId\": 1,\n  \"name\": \"Kopi Susu Updated\",\n  \"price\": 18000.0,\n  \"sku\": \"SKU-001\",\n  \"upc\": \"UPC-001\",\n  \"imageUrl\": \"https://virellon.cashup.id/images/sample.jpg\",\n  \"imageThumbUrl\": \"https://virellon.cashup.id/images/sample_thumb.jpg\",\n  \"description\": \"Kopi susu nikmat updated\",\n  \"isActive\": true,\n  \"isStock\": true,\n  \"categoryIds\": [1]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -381,6 +401,320 @@
               "status": "OK",
               "code": 200,
               "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Prices recalculated successfully\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Add Variant Group",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ukuran\",\n  \"isRequired\": true,\n  \"displayOrder\": 1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant-group/add",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "variant-group", "add"]
+            },
+            "description": "Tambah variant group baru ke produk. isRequired: apakah pelanggan wajib memilih variant."
+          },
+          "response": [
+            {
+              "name": "Add Variant Group Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Ukuran\",\n    \"isRequired\": true,\n    \"displayOrder\": 1,\n    \"isActive\": true,\n    \"variants\": []\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Variant Group",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Ukuran Updated\",\n  \"isRequired\": false,\n  \"displayOrder\": 2\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant-group/{{variant_group_id}}",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "variant-group", "{{variant_group_id}}"]
+            },
+            "description": "Update data variant group."
+          },
+          "response": [
+            {
+              "name": "Update Variant Group Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Ukuran Updated\",\n    \"isRequired\": false,\n    \"displayOrder\": 2,\n    \"isActive\": true,\n    \"variants\": []\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete Variant Group",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant-group/{{variant_group_id}}",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "variant-group", "{{variant_group_id}}"]
+            },
+            "description": "Hapus variant group. Gagal jika masih ada variant aktif di dalamnya."
+          },
+          "response": [
+            {
+              "name": "Delete Variant Group Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Variant group deleted\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Add Variant",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"variantGroupId\": 1,\n  \"name\": \"Small\",\n  \"additionalPrice\": 0.0,\n  \"sku\": \"SKU-001-S\",\n  \"isStock\": true,\n  \"isDefault\": true,\n  \"qty\": 50\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant/add",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "variant", "add"]
+            },
+            "description": "Tambah variant baru ke produk. isDefault: set sebagai pilihan default di group. isStock: apakah stok variant ini perlu dilacak. qty: stok awal (hanya diproses jika isStock=true)."
+          },
+          "response": [
+            {
+              "name": "Add Variant Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Small\",\n    \"additionalPrice\": 0.0,\n    \"sku\": \"SKU-001-S\",\n    \"isStock\": true,\n    \"isDefault\": true,\n    \"qty\": 50,\n    \"isActive\": true\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Variant",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"variantGroupId\": 1,\n  \"name\": \"Small Updated\",\n  \"additionalPrice\": 1000.0,\n  \"sku\": \"SKU-001-S\",\n  \"isStock\": true,\n  \"isDefault\": false,\n  \"qty\": 50\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant/{{variant_id}}",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "variant", "{{variant_id}}"]
+            },
+            "description": "Update data variant. Jika isDefault diubah ke true, default lama di group yang sama akan dicabut."
+          },
+          "response": [
+            {
+              "name": "Update Variant Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Small Updated\",\n    \"additionalPrice\": 1000.0,\n    \"sku\": \"SKU-001-S\",\n    \"isStock\": true,\n    \"isDefault\": false,\n    \"qty\": 50,\n    \"isActive\": true\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Set Variant Active",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant/{{variant_id}}/active?isActive=false",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "variant", "{{variant_id}}", "active"],
+              "query": [
+                { "key": "isActive", "value": "false", "description": "true untuk aktifkan, false untuk nonaktifkan" }
+              ]
+            },
+            "description": "Aktifkan atau nonaktifkan variant."
+          },
+          "response": [
+            {
+              "name": "Set Variant Active Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Small\",\n    \"isActive\": false\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Add Modifier Group",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Tingkat Kemanisan\",\n  \"isRequired\": false,\n  \"minSelect\": 0,\n  \"maxSelect\": 1,\n  \"displayOrder\": 1\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier-group/add",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "modifier-group", "add"]
+            },
+            "description": "Tambah modifier group baru ke produk. minSelect/maxSelect menentukan berapa modifier yang boleh dipilih."
+          },
+          "response": [
+            {
+              "name": "Add Modifier Group Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Tingkat Kemanisan\",\n    \"isRequired\": false,\n    \"minSelect\": 0,\n    \"maxSelect\": 1,\n    \"displayOrder\": 1,\n    \"isActive\": true,\n    \"modifiers\": []\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Modifier Group",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Tingkat Kemanisan Updated\",\n  \"isRequired\": true,\n  \"minSelect\": 1,\n  \"maxSelect\": 1,\n  \"displayOrder\": 2\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier-group/{{modifier_group_id}}",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "modifier-group", "{{modifier_group_id}}"]
+            },
+            "description": "Update data modifier group."
+          },
+          "response": [
+            {
+              "name": "Update Modifier Group Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Tingkat Kemanisan Updated\",\n    \"isRequired\": true,\n    \"minSelect\": 1,\n    \"maxSelect\": 1,\n    \"displayOrder\": 2,\n    \"isActive\": true,\n    \"modifiers\": []\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Delete Modifier Group",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier-group/{{modifier_group_id}}",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "modifier-group", "{{modifier_group_id}}"]
+            },
+            "description": "Hapus modifier group. Gagal jika masih ada modifier aktif di dalamnya."
+          },
+          "response": [
+            {
+              "name": "Delete Modifier Group Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Modifier group deleted\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Add Modifier",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"modifierGroupId\": 1,\n  \"name\": \"Normal\",\n  \"additionalPrice\": 0.0,\n  \"isStock\": false,\n  \"isDefault\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier/add",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "modifier", "add"]
+            },
+            "description": "Tambah modifier baru ke produk. isDefault: set sebagai pilihan default di group. isStock: apakah stok modifier ini perlu dilacak (default false)."
+          },
+          "response": [
+            {
+              "name": "Add Modifier Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Normal\",\n    \"additionalPrice\": 0.0,\n    \"isStock\": false,\n    \"isDefault\": true,\n    \"isActive\": true\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Modifier",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"modifierGroupId\": 1,\n  \"name\": \"Normal Updated\",\n  \"additionalPrice\": 2000.0,\n  \"isStock\": false,\n  \"isDefault\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier/{{modifier_id}}",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "modifier", "{{modifier_id}}"]
+            },
+            "description": "Update data modifier. Jika isDefault diubah ke true, default lama di group yang sama akan dicabut."
+          },
+          "response": [
+            {
+              "name": "Update Modifier Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Normal Updated\",\n    \"additionalPrice\": 2000.0,\n    \"isStock\": false,\n    \"isDefault\": false,\n    \"isActive\": true\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Set Modifier Active",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier/{{modifier_id}}/active?isActive=false",
+              "host": ["{{pos_base_url}}"],
+              "path": ["pos", "product", "{{product_id}}", "modifier", "{{modifier_id}}", "active"],
+              "query": [
+                { "key": "isActive", "value": "false", "description": "true untuk aktifkan, false untuk nonaktifkan" }
+              ]
+            },
+            "description": "Aktifkan atau nonaktifkan modifier."
+          },
+          "response": [
+            {
+              "name": "Set Modifier Active Success",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Normal\",\n    \"isActive\": false\n  }\n}"
             }
           ]
         }

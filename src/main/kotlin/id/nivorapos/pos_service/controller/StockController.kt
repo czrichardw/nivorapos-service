@@ -5,11 +5,10 @@ import id.nivorapos.pos_service.dto.response.ApiResponse
 import id.nivorapos.pos_service.dto.response.PagedResponse
 import id.nivorapos.pos_service.dto.response.StockMovementResponse
 import id.nivorapos.pos_service.service.StockService
-import org.springframework.format.annotation.DateTimeFormat
+import id.nivorapos.pos_service.util.DateParam
 import org.springframework.http.ResponseEntity
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.web.bind.annotation.*
-import java.time.LocalDateTime
 
 @RestController
 @RequestMapping("/pos")
@@ -31,9 +30,9 @@ class StockController(
     @PreAuthorize("hasAuthority('STOCK_VIEW')")
     fun stockMovementList(
         @RequestParam productId: Long,
-        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) startDate: LocalDateTime?,
-        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) endDate: LocalDateTime?
+        @RequestParam(required = false) startDate: String?,
+        @RequestParam(required = false) endDate: String?
     ): ResponseEntity<PagedResponse<StockMovementResponse>> {
-        return ResponseEntity.ok(stockService.stockMovementList(productId, startDate, endDate))
+        return ResponseEntity.ok(stockService.stockMovementList(productId, DateParam.parseStart(startDate), DateParam.parseEnd(endDate)))
     }
 }

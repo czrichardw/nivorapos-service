@@ -77,6 +77,21 @@ class Transaction(
     @Column(name = "cash_change", precision = 19, scale = 2)
     var cashChange: BigDecimal = BigDecimal.ZERO,
 
+    @Column(name = "discount_id")
+    var discountId: Long? = null,
+
+    @Column(name = "discount_code")
+    var discountCode: String? = null,
+
+    @Column(name = "discount_name")
+    var discountName: String? = null,
+
+    @Column(name = "discount_amount", precision = 19, scale = 2)
+    var discountAmount: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "promo_amount", precision = 19, scale = 2)
+    var promoAmount: BigDecimal = BigDecimal.ZERO,
+
     @Column(name = "queue_id")
     var queueId: Long? = null,
 
