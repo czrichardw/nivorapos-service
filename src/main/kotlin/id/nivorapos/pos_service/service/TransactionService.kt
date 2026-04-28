@@ -295,21 +295,28 @@ class TransactionService(
         val username = SecurityUtils.getUsernameFromContext()
         val now = LocalDateTime.now()
 
-        // Lookup transaction: by paymentTrxId first (payment gateway callback), then by transactionId or code
+        // Lookup transaction: by paymentTrxId first (payment gateway callback), then by transactionId or merchant trx id
+        val merchantTrxId = request.code ?: request.merchantTrxId
         val transaction = when {
-            !request.paymentTrxId.isNullOrBlank() && request.transactionId == null && request.code.isNullOrBlank() -> {
+            !request.paymentTrxId.isNullOrBlank() && request.transactionId == null && merchantTrxId.isNullOrBlank() -> {
                 val payment = paymentRepository.findByPaymentTrxId(request.paymentTrxId)
-                    .orElseThrow { RuntimeException("Payment not found: ${request.paymentTrxId}") }
+                    .orElseThrow {
+                        RuntimeException(
+                            "Payment not found: ${request.paymentTrxId}. " +
+                                "Call PUT /pos/transaction/initiate-payment/{merchantTrxId} first " +
+                                "to bind paymentTrxId, or update the transaction via /pos/transaction/update/{merchantTrxId}."
+                        )
+                    }
                 transactionRepository.findById(payment.transactionId)
                     .orElseThrow { RuntimeException("Transaction not found for payment: ${request.paymentTrxId}") }
             }
             request.transactionId != null && request.transactionId > 0 ->
                 transactionRepository.findById(request.transactionId)
                     .orElseThrow { RuntimeException("Transaction not found: ${request.transactionId}") }
-            !request.code.isNullOrBlank() ->
-                transactionRepository.findByTrxId(request.code)
-                    .orElseThrow { RuntimeException("Transaction not found: ${request.code}") }
-            else -> throw RuntimeException("transactionId, code, or paymentTrxId is required")
+            !merchantTrxId.isNullOrBlank() ->
+                transactionRepository.findByTrxId(merchantTrxId)
+                    .orElseThrow { RuntimeException("Transaction not found: $merchantTrxId") }
+            else -> throw RuntimeException("transactionId, code, merchantTrxId, or paymentTrxId is required")
         }
 
         transaction.status = request.status
