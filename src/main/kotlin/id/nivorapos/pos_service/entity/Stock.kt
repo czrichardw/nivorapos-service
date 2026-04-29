@@ -4,14 +4,20 @@ import jakarta.persistence.*
 import java.time.LocalDateTime
 
 @Entity
-@Table(name = "stock")
+@Table(
+    name = "stock",
+    uniqueConstraints = [UniqueConstraint(columnNames = ["product_id", "variant_id"])]
+)
 class Stock(
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
 
-    @Column(name = "product_id", unique = true)
+    @Column(name = "product_id")
     var productId: Long = 0,
+
+    @Column(name = "variant_id")
+    var variantId: Long? = null,
 
     @Column(name = "qty")
     var qty: Int = 0,

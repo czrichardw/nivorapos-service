@@ -13,6 +13,9 @@ class StockMovement(
     @Column(name = "product_id")
     var productId: Long = 0,
 
+    @Column(name = "variant_id")
+    var variantId: Long? = null,
+
     @Column(name = "merchant_id")
     var merchantId: Long = 0,
 
@@ -24,6 +27,9 @@ class StockMovement(
 
     @Column(name = "qty")
     var qty: Int = 0,
+
+    @Column(name = "stock_after")
+    var stockAfter: Int = 0,
 
     @Column(name = "movement_type")
     var movementType: String = "",

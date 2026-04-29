@@ -29,6 +29,18 @@ class TransactionItem(
     @Column(name = "total_price", precision = 19, scale = 2)
     var totalPrice: BigDecimal = BigDecimal.ZERO,
 
+    @Column(name = "variant_id")
+    var variantId: Long? = null,
+
+    @Column(name = "variant_name")
+    var variantName: String? = null,
+
+    @Column(name = "variant_additional_price", precision = 19, scale = 2)
+    var variantAdditionalPrice: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "modifiers_additional_price", precision = 19, scale = 2)
+    var modifiersAdditionalPrice: BigDecimal = BigDecimal.ZERO,
+
     @Column(name = "product_snapshot", columnDefinition = "text")
     var productSnapshot: String? = null,
 

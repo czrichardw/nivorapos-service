@@ -39,6 +39,8 @@ class PaymentSettingService(
             throw RuntimeException("Payment setting already exists for this merchant. Use update instead.")
         }
 
+        validateRequest(request)
+
         val setting = PaymentSetting(
             merchantId = merchantId,
             isPriceIncludeTax = request.isPriceIncludeTax,
@@ -48,6 +50,7 @@ class PaymentSettingService(
             isServiceCharge = request.isServiceCharge,
             serviceChargePercentage = request.serviceChargePercentage,
             serviceChargeAmount = request.serviceChargeAmount,
+            serviceChargeSource = request.serviceChargeSource?.uppercase(),
             isTax = request.isTax,
             taxPercentage = request.taxPercentage,
             taxName = request.taxName,
@@ -71,6 +74,8 @@ class PaymentSettingService(
         val setting = paymentSettingRepository.findByMerchantId(merchantId)
             .orElseThrow { RuntimeException("Payment setting not found") }
 
+        validateRequest(request)
+
         setting.isPriceIncludeTax = request.isPriceIncludeTax
         setting.isRounding = request.isRounding
         setting.roundingTarget = request.roundingTarget
@@ -78,6 +83,7 @@ class PaymentSettingService(
         setting.isServiceCharge = request.isServiceCharge
         setting.serviceChargePercentage = request.serviceChargePercentage
         setting.serviceChargeAmount = request.serviceChargeAmount
+        setting.serviceChargeSource = request.serviceChargeSource?.uppercase()
         setting.isTax = request.isTax
         setting.taxPercentage = request.taxPercentage
         setting.taxName = request.taxName
@@ -128,6 +134,38 @@ class PaymentSettingService(
         )
     }
 
+    private fun validateRequest(request: PaymentSettingRequest) {
+        if (request.isServiceCharge) {
+            val hasPct = request.serviceChargePercentage > java.math.BigDecimal.ZERO
+            val hasAmt = request.serviceChargeAmount > java.math.BigDecimal.ZERO
+            require(hasPct || hasAmt) {
+                "serviceChargePercentage atau serviceChargeAmount wajib diisi jika isServiceCharge = true"
+            }
+            if (hasPct) {
+                require(request.serviceChargePercentage >= java.math.BigDecimal("0.01") &&
+                        request.serviceChargePercentage <= java.math.BigDecimal("100")) {
+                    "serviceChargePercentage harus antara 0.01 dan 100"
+                }
+            }
+            val validSources = listOf("BEFORE_TAX", "AFTER_TAX", "DPP", "AFTER_DISCOUNT")
+            require(request.serviceChargeSource != null && request.serviceChargeSource.uppercase() in validSources) {
+                "serviceChargeSource wajib diisi dengan BEFORE_TAX, AFTER_TAX, DPP, atau AFTER_DISCOUNT"
+            }
+        }
+        if (request.isRounding) {
+            require(request.roundingTarget > 0) { "roundingTarget harus > 0 jika isRounding = true" }
+            require(request.roundingType != null && request.roundingType.uppercase() in listOf("FLOOR", "CEIL", "ROUND")) {
+                "roundingType harus FLOOR, CEIL, atau ROUND"
+            }
+        }
+        if (request.isTax) {
+            require(request.taxPercentage >= java.math.BigDecimal("0.01") &&
+                    request.taxPercentage <= java.math.BigDecimal("100")) {
+                "taxPercentage harus antara 0.01 dan 100 jika isTax = true"
+            }
+        }
+    }
+
     private fun PaymentSetting.toResponse() = PaymentSettingResponse(
         id = id,
         merchantId = merchantId,
@@ -138,6 +176,7 @@ class PaymentSettingService(
         isServiceCharge = isServiceCharge,
         serviceChargePercentage = serviceChargePercentage,
         serviceChargeAmount = serviceChargeAmount,
+        serviceChargeSource = serviceChargeSource,
         isTax = isTax,
         taxPercentage = taxPercentage,
         taxName = taxName,

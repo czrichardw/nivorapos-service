@@ -5,6 +5,7 @@ import java.math.BigDecimal
 data class TransactionUpdateRequest(
     val transactionId: Long? = null,
     val code: String? = null,
+    val merchantTrxId: String? = null,
     val status: String,
     val paymentStatus: String? = null,
     val paymentMethod: String? = null,

@@ -13,6 +13,7 @@ data class PaymentSettingResponse(
     val isServiceCharge: Boolean,
     val serviceChargePercentage: BigDecimal,
     val serviceChargeAmount: BigDecimal,
+    val serviceChargeSource: String?,
     val isTax: Boolean,
     val taxPercentage: BigDecimal,
     val taxName: String?,

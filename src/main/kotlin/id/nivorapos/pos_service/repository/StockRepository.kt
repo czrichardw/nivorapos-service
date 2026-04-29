@@ -8,4 +8,7 @@ import java.util.Optional
 @Repository
 interface StockRepository : JpaRepository<Stock, Long> {
     fun findByProductId(productId: Long): Optional<Stock>
+    fun findByProductIdAndVariantIdIsNull(productId: Long): Optional<Stock>
+    fun findByProductIdAndVariantId(productId: Long, variantId: Long): Optional<Stock>
+    fun findAllByProductId(productId: Long): List<Stock>
 }
