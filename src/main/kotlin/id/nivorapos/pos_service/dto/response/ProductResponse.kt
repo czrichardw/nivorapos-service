@@ -28,6 +28,8 @@ data class ProductResponse(
     val productType: String,
     val sku: String?,
     val upc: String?,
+    val imageUrl: String?,
+    val imageThumbUrl: String?,
     val description: String?,
     val stockMode: String?,
     val basePrice: BigDecimal,

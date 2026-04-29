@@ -536,6 +536,8 @@ class ProductService(
             productType = product.productType,
             sku = product.sku,
             upc = product.upc,
+            imageUrl = product.imageUrl,
+            imageThumbUrl = product.imageThumbUrl,
             description = product.description,
             stockMode = product.stockMode,
             basePrice = basePrice,
