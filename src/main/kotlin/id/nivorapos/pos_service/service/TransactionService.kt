@@ -160,30 +160,10 @@ class TransactionService(
             )
             transactionItemRepository.save(item)
 
-            // Reduce stock
-            stockRepository.findByProductId(itemReq.productId).ifPresent { stock ->
-                if (stock.qty >= itemReq.qty) {
-                    stock.qty -= itemReq.qty
-                    stock.modifiedBy = username
-                    stock.modifiedDate = now
-                    stockRepository.save(stock)
+        }
 
-                    val movement = StockMovement(
-                        productId = itemReq.productId,
-                        merchantId = merchantId,
-                        outletId = request.outletId,
-                        referenceId = savedTrx.id,
-                        qty = itemReq.qty,
-                        movementType = "REDUCE",
-                        movementReason = "TRANSACTION",
-                        createdBy = username,
-                        createdDate = now,
-                        modifiedBy = username,
-                        modifiedDate = now
-                    )
-                    stockMovementRepository.save(movement)
-                }
-            }
+        if (isPaidStatus(savedTrx.status)) {
+            reduceStockForTransaction(savedTrx, username, now)
         }
 
         // Save payment record
@@ -229,6 +209,8 @@ class TransactionService(
             else -> throw RuntimeException("transactionId, code, or paymentTrxId is required")
         }
 
+        val previousStatus = transaction.status
+        val effectiveStatusForStock = request.paymentStatus ?: request.status
         transaction.status = request.status
         transaction.modifiedBy = username
         transaction.modifiedDate = now
@@ -251,6 +233,13 @@ class TransactionService(
             payment.modifiedBy = username
             payment.modifiedDate = now
             paymentRepository.save(payment)
+        }
+
+        when {
+            !isPaidStatus(previousStatus) && isPaidStatus(effectiveStatusForStock) ->
+                reduceStockForTransaction(transaction, username, now)
+            isFailedOrCancelledStatus(effectiveStatusForStock) ->
+                restoreStockForTransaction(transaction, username, now)
         }
 
         return ApiResponse.success("Transaction updated", buildDetail(transaction))
@@ -500,5 +489,101 @@ class TransactionService(
 
     private fun parseBD(value: String?): BigDecimal {
         return try { BigDecimal(value ?: "0") } catch (e: Exception) { BigDecimal.ZERO }
+    }
+
+    private fun reduceStockForTransaction(transaction: Transaction, username: String, now: LocalDateTime) {
+        if (hasActiveStockReduction(transaction.id)) {
+            return
+        }
+
+        val items = transactionItemRepository.findByTransactionId(transaction.id)
+        items.forEach { item ->
+            val stock = stockRepository.findByProductId(item.productId)
+                .orElseThrow { RuntimeException("Stock not found for product ${item.productId}") }
+            if (stock.qty < item.qty) {
+                throw RuntimeException("Insufficient stock for product ${item.productId}")
+            }
+
+            stock.qty -= item.qty
+            stock.modifiedBy = username
+            stock.modifiedDate = now
+            stockRepository.save(stock)
+
+            stockMovementRepository.save(
+                StockMovement(
+                    productId = item.productId,
+                    merchantId = transaction.merchantId,
+                    outletId = transaction.outletId,
+                    referenceId = transaction.id,
+                    qty = item.qty,
+                    movementType = STOCK_MOVEMENT_REDUCE,
+                    movementReason = STOCK_MOVEMENT_TRANSACTION,
+                    createdBy = username,
+                    createdDate = now,
+                    modifiedBy = username,
+                    modifiedDate = now
+                )
+            )
+        }
+    }
+
+    private fun restoreStockForTransaction(transaction: Transaction, username: String, now: LocalDateTime) {
+        if (!hasActiveStockReduction(transaction.id)) {
+            return
+        }
+
+        val items = transactionItemRepository.findByTransactionId(transaction.id)
+        items.forEach { item ->
+            val stock = stockRepository.findByProductId(item.productId)
+                .orElseThrow { RuntimeException("Stock not found for product ${item.productId}") }
+            stock.qty += item.qty
+            stock.modifiedBy = username
+            stock.modifiedDate = now
+            stockRepository.save(stock)
+
+            stockMovementRepository.save(
+                StockMovement(
+                    productId = item.productId,
+                    merchantId = transaction.merchantId,
+                    outletId = transaction.outletId,
+                    referenceId = transaction.id,
+                    qty = item.qty,
+                    movementType = STOCK_MOVEMENT_ADD,
+                    movementReason = STOCK_MOVEMENT_TRANSACTION_CANCELLED,
+                    note = "Restored after transaction status ${transaction.status}",
+                    createdBy = username,
+                    createdDate = now,
+                    modifiedBy = username,
+                    modifiedDate = now
+                )
+            )
+        }
+    }
+
+    private fun hasActiveStockReduction(transactionId: Long): Boolean {
+        val reduceCount = stockMovementRepository.countByReferenceIdAndMovementTypeAndMovementReason(
+            transactionId,
+            STOCK_MOVEMENT_REDUCE,
+            STOCK_MOVEMENT_TRANSACTION
+        )
+        val restoreCount = stockMovementRepository.countByReferenceIdAndMovementTypeAndMovementReason(
+            transactionId,
+            STOCK_MOVEMENT_ADD,
+            STOCK_MOVEMENT_TRANSACTION_CANCELLED
+        )
+        return reduceCount > restoreCount
+    }
+
+    private fun isPaidStatus(status: String?): Boolean =
+        status?.uppercase() in setOf("PAID", "SUCCESS")
+
+    private fun isFailedOrCancelledStatus(status: String?): Boolean =
+        status?.uppercase() in setOf("FAILED", "CANCELLED", "CANCELED", "VOID", "EXPIRED")
+
+    companion object {
+        private const val STOCK_MOVEMENT_ADD = "ADD"
+        private const val STOCK_MOVEMENT_REDUCE = "REDUCE"
+        private const val STOCK_MOVEMENT_TRANSACTION = "TRANSACTION"
+        private const val STOCK_MOVEMENT_TRANSACTION_CANCELLED = "TRANSACTION_CANCELLED"
     }
 }

@@ -17,4 +17,10 @@ interface StockMovementRepository : JpaRepository<StockMovement, Long> {
     ): Page<StockMovement>
 
     fun findByProductId(productId: Long): List<StockMovement>
+
+    fun countByReferenceIdAndMovementTypeAndMovementReason(
+        referenceId: Long,
+        movementType: String,
+        movementReason: String
+    ): Long
 }
