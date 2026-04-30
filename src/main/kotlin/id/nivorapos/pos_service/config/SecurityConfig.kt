@@ -1,8 +1,11 @@
 package id.nivorapos.pos_service.config
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import id.nivorapos.pos_service.security.JwtAuthenticationFilter
+import jakarta.servlet.http.HttpServletResponse
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.http.MediaType
 import org.springframework.security.authentication.AuthenticationManager
 import org.springframework.security.authentication.AuthenticationProvider
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider
@@ -20,7 +23,8 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 class SecurityConfig(
     private val jwtAuthenticationFilter: JwtAuthenticationFilter,
     private val userDetailsService: UserDetailsService,
-    private val passwordEncoder: PasswordEncoder
+    private val passwordEncoder: PasswordEncoder,
+    private val objectMapper: ObjectMapper
 ) {
 
     @Bean
@@ -46,6 +50,17 @@ class SecurityConfig(
             }
             .sessionManagement { session ->
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            }
+            .exceptionHandling { ex ->
+                ex.authenticationEntryPoint { _, response, authException ->
+                    response.status = HttpServletResponse.SC_UNAUTHORIZED
+                    response.contentType = MediaType.APPLICATION_JSON_VALUE
+                    response.writer.write(
+                        objectMapper.writeValueAsString(
+                            mapOf("status" to false, "message" to (authException.message ?: "Unauthorized — missing or invalid token"))
+                        )
+                    )
+                }
             }
             .authenticationProvider(authenticationProvider())
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)
