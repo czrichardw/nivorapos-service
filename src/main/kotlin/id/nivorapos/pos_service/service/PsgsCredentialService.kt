@@ -24,6 +24,8 @@ class PsgsCredentialService(
     private val driverClassName: String,
     @Value("\${psgs.datasource.master-schema:midware_master}")
     private val masterSchema: String,
+    @Value("\${psgs.login.require-password:false}")
+    private val requireLoginPassword: Boolean,
     private val passwordEncoder: PasswordEncoder
 ) {
 
@@ -43,7 +45,7 @@ class PsgsCredentialService(
                     user.enabled != false &&
                     user.deletedAt == null &&
                     user.merchantId != null &&
-                    passwordMatches(rawPassword, user)
+                    (!requireLoginPassword || passwordMatches(rawPassword, user))
             } ?: return null
 
             val merchant = findMerchant(conn, matchedUser.merchantId!!)
