@@ -130,7 +130,11 @@ class PsgsPosProvisioningService(
 
     private fun assignCashierRole(user: User, merchantId: Long, now: LocalDateTime) {
         val cashierRole = ensureRoleAndPermissions(now)
-        if (!userRoleRepository.existsByUserIdAndRoleId(user.id, cashierRole.id)) {
+        val hasRoleForMerchant = userRoleRepository.findByUserId(user.id).any {
+            it.roleId == cashierRole.id && (it.scopeId == null || it.scopeId == merchantId)
+        }
+
+        if (!hasRoleForMerchant) {
             userRoleRepository.save(
                 UserRole(
                     userId = user.id,
