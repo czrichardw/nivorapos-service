@@ -38,8 +38,7 @@ class PermissionResolver(
             effectivePermissionIds.addAll(globalIds)
         }
 
-        return effectivePermissionIds.mapNotNull { permId ->
-            permissionRepository.findById(permId).orElse(null)?.code
-        }.map { SimpleGrantedAuthority(it) }.toSet()
+        return permissionRepository.findAllById(effectivePermissionIds)
+            .map { SimpleGrantedAuthority(it.code) }.toSet()
     }
 }

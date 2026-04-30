@@ -32,9 +32,8 @@ class ReportService(
         val totalRevenue = transactions.fold(BigDecimal.ZERO) { acc, t -> acc.add(t.totalAmount) }
 
         // Aggregate product sales
-        val allItems = transactions.flatMap { trx ->
-            transactionItemRepository.findByTransactionId(trx.id)
-        }
+        val transactionIds = transactions.map { it.id }
+        val allItems = transactionItemRepository.findByTransactionIdIn(transactionIds)
         val productSalesMap = mutableMapOf<String, Pair<Long, BigDecimal>>()
         allItems.forEach { item ->
             val current = productSalesMap.getOrDefault(item.productName, Pair(0L, BigDecimal.ZERO))
@@ -52,9 +51,7 @@ class ReportService(
         }.sortedByDescending { it.totalSaleItems }
 
         // Aggregate payments
-        val allPayments = transactions.flatMap { trx ->
-            paymentRepository.findByTransactionId(trx.id)
-        }
+        val allPayments = paymentRepository.findByTransactionIdIn(transactionIds)
         val paymentMethodMap = mutableMapOf<String, Pair<Long, BigDecimal>>()
         allPayments.filter { it.isEffective }.forEach { payment ->
             val method = payment.paymentMethod ?: "UNKNOWN"

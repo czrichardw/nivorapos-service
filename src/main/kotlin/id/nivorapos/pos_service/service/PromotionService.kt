@@ -27,8 +27,22 @@ class PromotionService(
     fun list(): ApiResponse<List<PromotionResponse>> {
         val merchantId = SecurityUtils.getMerchantIdFromContext()
         val promos = promotionRepository.findByMerchantIdAndDeletedDateIsNullOrderByPriorityAsc(merchantId)
-            .map { buildResponse(it) }
-        return ApiResponse.success("Promotion list retrieved", promos)
+        if (promos.isEmpty()) return ApiResponse.success("Promotion list retrieved", emptyList())
+
+        val ids = promos.map { it.id }
+        val buyProductsByPromo    = promotionBuyProductRepository.findByPromotionIdIn(ids).groupBy { it.promotionId }.mapValues { (_, v) -> v.map { it.productId } }
+        val buyCategoryByPromo    = promotionBuyCategoryRepository.findByPromotionIdIn(ids).groupBy { it.promotionId }.mapValues { (_, v) -> v.map { it.categoryId } }
+        val rewardProductsByPromo = promotionRewardProductRepository.findByPromotionIdIn(ids).groupBy { it.promotionId }.mapValues { (_, v) -> v.map { it.productId } }
+        val rewardCategoryByPromo = promotionRewardCategoryRepository.findByPromotionIdIn(ids).groupBy { it.promotionId }.mapValues { (_, v) -> v.map { it.categoryId } }
+        val outletsByPromo        = promotionOutletRepository.findByPromotionIdIn(ids).groupBy { it.promotionId }.mapValues { (_, v) -> v.map { it.outletId } }
+
+        return ApiResponse.success("Promotion list retrieved", promos.map {
+            buildResponse(it,
+                buyProductsByPromo[it.id] ?: emptyList(), buyCategoryByPromo[it.id] ?: emptyList(),
+                rewardProductsByPromo[it.id] ?: emptyList(), rewardCategoryByPromo[it.id] ?: emptyList(),
+                outletsByPromo[it.id] ?: emptyList()
+            )
+        })
     }
 
     fun detail(id: Long): ApiResponse<PromotionResponse> {
@@ -435,12 +449,21 @@ class PromotionService(
         promotionOutletRepository.deleteByPromotionId(promotionId)
     }
 
-    private fun buildResponse(promo: Promotion): PromotionResponse {
-        val buyProductIds = promotionBuyProductRepository.findByPromotionId(promo.id).map { it.productId }
-        val buyCategoryIds = promotionBuyCategoryRepository.findByPromotionId(promo.id).map { it.categoryId }
-        val rewardProductIds = promotionRewardProductRepository.findByPromotionId(promo.id).map { it.productId }
-        val rewardCategoryIds = promotionRewardCategoryRepository.findByPromotionId(promo.id).map { it.categoryId }
-        val outletIds = promotionOutletRepository.findByPromotionId(promo.id).map { it.outletId }
+    private fun buildResponse(promo: Promotion): PromotionResponse = buildResponse(
+        promo,
+        promotionBuyProductRepository.findByPromotionId(promo.id).map { it.productId },
+        promotionBuyCategoryRepository.findByPromotionId(promo.id).map { it.categoryId },
+        promotionRewardProductRepository.findByPromotionId(promo.id).map { it.productId },
+        promotionRewardCategoryRepository.findByPromotionId(promo.id).map { it.categoryId },
+        promotionOutletRepository.findByPromotionId(promo.id).map { it.outletId }
+    )
+
+    private fun buildResponse(
+        promo: Promotion,
+        buyProductIds: List<Long>, buyCategoryIds: List<Long>,
+        rewardProductIds: List<Long>, rewardCategoryIds: List<Long>,
+        outletIds: List<Long>
+    ): PromotionResponse {
         val validDays = if (promo.validDays.isNullOrBlank()) emptyList()
                         else promo.validDays!!.split(",").map { it.trim() }
 

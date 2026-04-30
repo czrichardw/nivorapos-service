@@ -7,5 +7,6 @@ import org.springframework.stereotype.Repository
 @Repository
 interface TransactionItemModifierRepository : JpaRepository<TransactionItemModifier, Long> {
     fun findByTransactionItemId(transactionItemId: Long): List<TransactionItemModifier>
+    fun findByTransactionItemIdIn(transactionItemIds: List<Long>): List<TransactionItemModifier>
     fun existsByModifierId(modifierId: Long): Boolean
 }

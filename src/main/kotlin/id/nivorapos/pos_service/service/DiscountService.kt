@@ -29,8 +29,16 @@ class DiscountService(
     fun list(): ApiResponse<List<DiscountResponse>> {
         val merchantId = SecurityUtils.getMerchantIdFromContext()
         val discounts = discountRepository.findByMerchantIdAndDeletedDateIsNull(merchantId)
-            .map { buildResponse(it) }
-        return ApiResponse.success("Discount list retrieved", discounts)
+        if (discounts.isEmpty()) return ApiResponse.success("Discount list retrieved", emptyList())
+
+        val ids = discounts.map { it.id }
+        val productIdsByDiscount  = discountProductRepository.findByDiscountIdIn(ids).groupBy { it.discountId }.mapValues { (_, v) -> v.map { it.productId } }
+        val categoryIdsByDiscount = discountCategoryRepository.findByDiscountIdIn(ids).groupBy { it.discountId }.mapValues { (_, v) -> v.map { it.categoryId } }
+        val outletIdsByDiscount   = discountOutletRepository.findByDiscountIdIn(ids).groupBy { it.discountId }.mapValues { (_, v) -> v.map { it.outletId } }
+
+        return ApiResponse.success("Discount list retrieved", discounts.map {
+            buildResponse(it, productIdsByDiscount[it.id] ?: emptyList(), categoryIdsByDiscount[it.id] ?: emptyList(), outletIdsByDiscount[it.id] ?: emptyList())
+        })
     }
 
     fun detail(id: Long): ApiResponse<DiscountResponse> {
@@ -416,10 +424,14 @@ class DiscountService(
         }
     }
 
-    private fun buildResponse(discount: Discount): DiscountResponse {
-        val productIds = discountProductRepository.findByDiscountId(discount.id).map { it.productId }
-        val categoryIds = discountCategoryRepository.findByDiscountId(discount.id).map { it.categoryId }
-        val outletIds = discountOutletRepository.findByDiscountId(discount.id).map { it.outletId }
+    private fun buildResponse(discount: Discount): DiscountResponse = buildResponse(
+        discount,
+        discountProductRepository.findByDiscountId(discount.id).map { it.productId },
+        discountCategoryRepository.findByDiscountId(discount.id).map { it.categoryId },
+        discountOutletRepository.findByDiscountId(discount.id).map { it.outletId }
+    )
+
+    private fun buildResponse(discount: Discount, productIds: List<Long>, categoryIds: List<Long>, outletIds: List<Long>): DiscountResponse {
         return DiscountResponse(
             id = discount.id,
             name = discount.name,

@@ -7,6 +7,7 @@ import org.springframework.stereotype.Repository
 @Repository
 interface DiscountOutletRepository : JpaRepository<DiscountOutlet, Long> {
     fun findByDiscountId(discountId: Long): List<DiscountOutlet>
+    fun findByDiscountIdIn(discountIds: List<Long>): List<DiscountOutlet>
     fun deleteByDiscountId(discountId: Long)
     fun existsByDiscountIdAndOutletId(discountId: Long, outletId: Long): Boolean
 }

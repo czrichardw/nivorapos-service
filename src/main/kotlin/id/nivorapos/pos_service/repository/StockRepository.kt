@@ -11,4 +11,5 @@ interface StockRepository : JpaRepository<Stock, Long> {
     fun findByProductIdAndVariantIdIsNull(productId: Long): Optional<Stock>
     fun findByProductIdAndVariantId(productId: Long, variantId: Long): Optional<Stock>
     fun findAllByProductId(productId: Long): List<Stock>
+    fun findByProductIdIn(productIds: List<Long>): List<Stock>
 }

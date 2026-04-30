@@ -21,7 +21,7 @@ class RequestResponseLoggingFilter : OncePerRequestFilter() {
         response: HttpServletResponse,
         filterChain: FilterChain
     ) {
-        val wrappedRequest = ContentCachingRequestWrapper(request, Int.MAX_VALUE)
+        val wrappedRequest = ContentCachingRequestWrapper(request, 65536)
         val wrappedResponse = ContentCachingResponseWrapper(response)
 
         val startTime = System.currentTimeMillis()

@@ -7,6 +7,7 @@ import org.springframework.stereotype.Repository
 @Repository
 interface PromotionOutletRepository : JpaRepository<PromotionOutlet, Long> {
     fun findByPromotionId(promotionId: Long): List<PromotionOutlet>
+    fun findByPromotionIdIn(promotionIds: List<Long>): List<PromotionOutlet>
     fun deleteByPromotionId(promotionId: Long)
     fun existsByPromotionIdAndOutletId(promotionId: Long, outletId: Long): Boolean
 }

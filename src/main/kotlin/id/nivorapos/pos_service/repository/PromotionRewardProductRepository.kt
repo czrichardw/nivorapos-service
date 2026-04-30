@@ -7,5 +7,6 @@ import org.springframework.stereotype.Repository
 @Repository
 interface PromotionRewardProductRepository : JpaRepository<PromotionRewardProduct, Long> {
     fun findByPromotionId(promotionId: Long): List<PromotionRewardProduct>
+    fun findByPromotionIdIn(promotionIds: List<Long>): List<PromotionRewardProduct>
     fun deleteByPromotionId(promotionId: Long)
 }

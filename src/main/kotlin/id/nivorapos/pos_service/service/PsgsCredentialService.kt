@@ -1,10 +1,12 @@
 package id.nivorapos.pos_service.service
 
+import com.zaxxer.hikari.HikariConfig
+import com.zaxxer.hikari.HikariDataSource
+import jakarta.annotation.PreDestroy
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import java.sql.Connection
-import java.sql.DriverManager
 import java.sql.ResultSet
 import java.security.MessageDigest
 import java.time.Instant
@@ -31,10 +33,30 @@ class PsgsCredentialService(
 
     fun isEnabled(): Boolean = integrationEnabled && url.isNotBlank()
 
+    private val psgsDataSource: HikariDataSource? by lazy {
+        if (!isEnabled()) null
+        else HikariDataSource(HikariConfig().apply {
+            jdbcUrl = url
+            username = this@PsgsCredentialService.username
+            password = this@PsgsCredentialService.password
+            driverClassName = this@PsgsCredentialService.driverClassName
+            maximumPoolSize = 5
+            minimumIdle = 1
+            connectionTimeout = 10_000
+            validationTimeout = 5_000
+            idleTimeout = 300_000
+            maxLifetime = 600_000
+        })
+    }
+
+    @PreDestroy
+    fun cleanup() {
+        psgsDataSource?.close()
+    }
+
     fun authenticate(login: String, rawPassword: String): PsgsCredential? {
         if (!isEnabled()) return null
         validateSchemaName(masterSchema)
-        Class.forName(driverClassName)
 
         connection().use { conn ->
             val candidates = findMobileAppUsersByLogin(conn, login).ifEmpty {
@@ -61,8 +83,6 @@ class PsgsCredentialService(
     fun findSessionByToken(token: String): PsgsMobileAppUserSession? {
         if (!isEnabled()) return null
         validateSchemaName(masterSchema)
-        Class.forName(driverClassName)
-
         connection().use { conn ->
             val sql = """
                 select username, hit_from, token, signing_key, update_at
@@ -85,8 +105,6 @@ class PsgsCredentialService(
     fun credentialFromSession(session: PsgsMobileAppUserSession): PsgsCredential? {
         if (!isEnabled()) return null
         validateSchemaName(masterSchema)
-        Class.forName(driverClassName)
-
         connection().use { conn ->
             val candidates = findMobileAppUsersByLogin(conn, session.username).ifEmpty {
                 findUsersByLogin(conn, session.username)
@@ -103,7 +121,8 @@ class PsgsCredentialService(
         }
     }
 
-    private fun connection(): Connection = DriverManager.getConnection(url, username, password)
+    private fun connection(): Connection = psgsDataSource?.connection
+        ?: throw IllegalStateException("PSGS datasource not initialized")
 
     private fun findMobileAppUsersByLogin(conn: Connection, login: String): List<PsgsUser> {
         val sql = """

@@ -59,10 +59,51 @@ class ProductService(
             categoryId = categoryId
         )
         val result = productRepository.findAll(spec, pageable)
+        val products = result.content
+
+        val data = if (products.isEmpty()) emptyList() else {
+            val ids = products.map { it.id }
+
+            // Single fetch for shared merchant-level data
+            val paymentSetting = paymentSettingRepository.findByMerchantId(merchantId).orElse(null)
+            val merchant = merchantRepository.findById(merchantId).orElse(null)
+
+            // Batch fetch all per-product collections in one query each
+            val pcByProductId      = productCategoryRepository.findByProductIdIn(ids).groupBy { it.productId }
+            val stocksByProductId  = stockRepository.findByProductIdIn(ids).groupBy { it.productId }
+            val imagesByProductId  = productImageRepository.findByProductIdIn(ids).groupBy { it.productId }
+            val variantsByProductId = productVariantRepository.findByProductIdIn(ids).groupBy { it.productId }
+            val modifiersByProductId = productModifierRepository.findByProductIdIn(ids).groupBy { it.productId }
+
+            // Batch fetch referenced entities
+            val allCategoryIds = pcByProductId.values.flatten().map { it.categoryId }.distinct()
+            val categoriesById = if (allCategoryIds.isEmpty()) emptyMap()
+                                 else categoryRepository.findAllById(allCategoryIds).associateBy { it.id }
+
+            val allGroupIds = variantsByProductId.values.flatten().map { it.variantGroupId }.distinct()
+            val variantGroupsById = if (allGroupIds.isEmpty()) emptyMap()
+                                    else productVariantGroupRepository.findAllById(allGroupIds).associateBy { it.id }
+
+            val allTaxIds = products.mapNotNull { it.taxId }.distinct()
+            val taxesById = if (allTaxIds.isEmpty()) emptyMap()
+                            else taxRepository.findAllById(allTaxIds).associateBy { it.id }
+
+            products.map { product ->
+                buildProductResponseBatched(
+                    product, paymentSetting, merchant,
+                    pcByProductId[product.id] ?: emptyList(),
+                    stocksByProductId[product.id] ?: emptyList(),
+                    imagesByProductId[product.id] ?: emptyList(),
+                    variantsByProductId[product.id] ?: emptyList(),
+                    modifiersByProductId[product.id] ?: emptyList(),
+                    categoriesById, variantGroupsById, taxesById
+                )
+            }
+        }
 
         return PagedResponse(
             message = "Product list retrieved",
-            data = result.content.map { buildProductResponse(it) },
+            data = data,
             page = result.number,
             size = result.size,
             totalElements = result.totalElements,
@@ -495,6 +536,103 @@ class ProductService(
             .orElseThrow { RuntimeException("Product not found") }
         require(product.merchantId == merchantId) { "Product tidak ditemukan" }
         return product
+    }
+
+    private fun buildProductResponseBatched(
+        product: Product,
+        paymentSetting: id.nivorapos.pos_service.entity.PaymentSetting?,
+        merchant: id.nivorapos.pos_service.entity.Merchant?,
+        productCategories: List<id.nivorapos.pos_service.entity.ProductCategory>,
+        allStocks: List<id.nivorapos.pos_service.entity.Stock>,
+        images: List<id.nivorapos.pos_service.entity.ProductImage>,
+        variants: List<id.nivorapos.pos_service.entity.ProductVariant>,
+        modifiers: List<id.nivorapos.pos_service.entity.ProductModifier>,
+        categoriesById: Map<Long, id.nivorapos.pos_service.entity.Category>,
+        variantGroupsById: Map<Long, id.nivorapos.pos_service.entity.ProductVariantGroup>,
+        taxesById: Map<Long, id.nivorapos.pos_service.entity.Tax>
+    ): ProductResponse {
+        val tax = product.taxId?.let { taxesById[it] }
+        val basePrice = product.basePrice ?: product.price
+
+        val qty = when {
+            product.productType == "VARIANT" -> allStocks.sumOf { it.qty }
+            !product.isStock -> 0
+            else -> allStocks.firstOrNull { it.variantId == null }?.qty ?: 0
+        }
+
+        val categories = productCategories.mapNotNull { pc ->
+            categoriesById[pc.categoryId]?.let { ProductCategoryResponse(id = it.id, name = it.name) }
+        }
+
+        val productImages = images.map {
+            ProductImageResponse(id = it.id, filename = it.filename, ext = it.ext, isMain = it.isMain)
+        }
+
+        val taxResponse = buildTaxResponse(tax, product, paymentSetting, basePrice)
+
+        val variantGroups = if (product.productType == "VARIANT") {
+            variants.map { it.variantGroupId }.distinct()
+                .mapNotNull { variantGroupsById[it] }
+                .map { group ->
+                    val groupVariants = variants.filter { it.variantGroupId == group.id }.map { v ->
+                        val variantQty = if (v.isStock) allStocks.firstOrNull { it.variantId == v.id }?.qty ?: 0 else 0
+                        ProductVariantResponse(
+                            id = v.id, name = v.name, additionalPrice = v.additionalPrice,
+                            sku = v.sku, isStock = v.isStock, isDefault = v.isDefault,
+                            qty = variantQty, isActive = v.isActive
+                        )
+                    }
+                    ProductVariantGroupResponse(
+                        id = group.id, name = group.name, isRequired = group.isRequired,
+                        displayOrder = group.displayOrder, isActive = group.isActive, variants = groupVariants
+                    )
+                }
+        } else emptyList()
+
+        val modifierResponses = if (product.productType in listOf("MODIFIER", "VARIANT")) {
+            modifiers.map { buildModifierResponse(it) }
+        } else emptyList()
+
+        return ProductResponse(
+            id = product.id, merchantId = product.merchantId, name = product.name,
+            productType = product.productType, sku = product.sku, upc = product.upc,
+            imageUrl = product.imageUrl, imageThumbUrl = product.imageThumbUrl,
+            description = product.description, stockMode = product.stockMode,
+            basePrice = basePrice, finalPrice = product.price,
+            isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true,
+            qty = qty, isActive = product.isActive, isStock = product.isStock,
+            merchantName = merchant?.merchantName ?: merchant?.name,
+            createdDate = product.createdDate, isTaxable = product.isTaxable,
+            tax = taxResponse, categories = categories, productImages = productImages,
+            variantGroups = variantGroups, modifiers = modifierResponses
+        )
+    }
+
+    private fun buildTaxResponse(
+        tax: id.nivorapos.pos_service.entity.Tax?,
+        product: Product,
+        paymentSetting: id.nivorapos.pos_service.entity.PaymentSetting?,
+        basePrice: BigDecimal
+    ): ProductTaxResponse? {
+        return if (tax != null) {
+            val taxAmount = calculateItemTaxAmount(
+                basePrice = basePrice, isTaxable = product.isTaxable,
+                isTaxEnabled = paymentSetting?.isTax == true,
+                isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true,
+                percentage = tax.percentage
+            )
+            ProductTaxResponse(taxId = tax.id, taxName = tax.name, taxPercentage = tax.percentage, taxAmount = taxAmount)
+        } else if (product.isTaxable && paymentSetting?.isTax == true && paymentSetting.taxPercentage > BigDecimal.ZERO) {
+            val taxAmount = calculateItemTaxAmount(
+                basePrice = basePrice, isTaxable = true, isTaxEnabled = true,
+                isPriceIncludeTax = paymentSetting.isPriceIncludeTax,
+                percentage = paymentSetting.taxPercentage
+            )
+            ProductTaxResponse(
+                taxId = null, taxName = paymentSetting.taxName,
+                taxPercentage = paymentSetting.taxPercentage, taxAmount = taxAmount
+            )
+        } else null
     }
 
     private fun buildProductResponse(product: Product): ProductResponse {
