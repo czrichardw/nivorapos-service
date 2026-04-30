@@ -134,8 +134,8 @@ class JwtAuthenticationFilter(
 
             val provisioningStart = System.nanoTime()
             val provisioned = psgsPosProvisioningService.provision(credential)
-            val merchantId = provisioned.merchant.id
-            log.info("[AUTH] $uri — credential resolved and provisioned: username='${session.username}' psgsMerchantId=${credential.merchant.id} posMerchantId=$merchantId merchantName='${provisioned.merchant.name}' provisioning=${elapsedMs(provisioningStart)}ms")
+            val merchantId = credential.merchant.id
+            log.info("[AUTH] $uri — credential resolved and provisioned: username='${session.username}' psgsMerchantId=$merchantId posMerchantId=${provisioned.merchant.id} merchantName='${provisioned.merchant.name}' provisioning=${elapsedMs(provisioningStart)}ms")
             val authorityCodes = permissionResolver.resolve(session.username, merchantId)
                 .map { it.authority }
                 .ifEmpty { PSGS_DEFAULT_AUTHORITIES }
