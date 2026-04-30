@@ -18,7 +18,6 @@ import org.springframework.web.filter.OncePerRequestFilter
 @Component
 class JwtAuthenticationFilter(
     private val jwtUtil: JwtUtil,
-    private val psgsTokenUtil: PsgsTokenUtil,
     private val psgsCredentialService: PsgsCredentialService,
     private val psgsPosProvisioningService: PsgsPosProvisioningService,
     private val userDetailsService: UserDetailsServiceImpl,
@@ -58,7 +57,7 @@ class JwtAuthenticationFilter(
             return
         }
 
-        log.info("[AUTH] $uri — Bearer token received: $token")
+        log.info("[AUTH] $uri — Bearer token received: $tokenPreview")
         log.info("[AUTH] $uri — attempting nivorapos JWT validation")
 
         try {
@@ -100,7 +99,7 @@ class JwtAuthenticationFilter(
             return
         }
 
-        log.info("[AUTH] $uri — querying midware_master.mobile_app_user_session for token: $token")
+        log.info("[AUTH] $uri — querying midware_master.mobile_app_user_session for token: ${token.take(12)}...")
 
         try {
             val session = psgsCredentialService.findSessionByToken(token)
