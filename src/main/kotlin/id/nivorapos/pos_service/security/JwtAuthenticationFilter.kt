@@ -2,6 +2,7 @@ package id.nivorapos.pos_service.security
 
 import id.nivorapos.pos_service.repository.UserDetailRepository
 import id.nivorapos.pos_service.service.PsgsCredentialService
+import id.nivorapos.pos_service.service.PsgsPosProvisioningService
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
@@ -16,6 +17,7 @@ class JwtAuthenticationFilter(
     private val jwtUtil: JwtUtil,
     private val psgsTokenUtil: PsgsTokenUtil,
     private val psgsCredentialService: PsgsCredentialService,
+    private val psgsPosProvisioningService: PsgsPosProvisioningService,
     private val userDetailsService: UserDetailsServiceImpl,
     private val userDetailRepository: UserDetailRepository,
     private val permissionResolver: PermissionResolver
@@ -77,8 +79,12 @@ class JwtAuthenticationFilter(
             val session = psgsCredentialService.findSessionByToken(token) ?: return
             if (!psgsTokenUtil.validateToken(token, session.signingKey, session.username)) return
 
+            val credential = psgsCredentialService.credentialFromSession(session) ?: return
+            val provisioned = psgsPosProvisioningService.provision(credential)
+
             val userDetails = userDetailsService.loadUserByUsername(session.username)
             val merchantId = userDetailRepository.findByUsername(session.username).orElse(null)?.merchantId
+                ?: provisioned.merchant.id
             val authorities = permissionResolver.resolve(session.username, merchantId)
 
             val authToken = UsernamePasswordAuthenticationToken(

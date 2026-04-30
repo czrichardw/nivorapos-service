@@ -82,6 +82,27 @@ class PsgsCredentialService(
         }
     }
 
+    fun credentialFromSession(session: PsgsMobileAppUserSession): PsgsCredential? {
+        if (!isEnabled()) return null
+        validateSchemaName(masterSchema)
+        Class.forName(driverClassName)
+
+        connection().use { conn ->
+            val candidates = findMobileAppUsersByLogin(conn, session.username).ifEmpty {
+                findUsersByLogin(conn, session.username)
+            }
+
+            val user = candidates.firstOrNull {
+                it.enabled != false && it.deletedAt == null && it.merchantId != null
+            } ?: return null
+
+            val merchant = findMerchant(conn, user.merchantId!!)
+                ?: throw RuntimeException("PSGS merchant not found for merchant_id ${user.merchantId}")
+
+            return PsgsCredential(user, merchant, session)
+        }
+    }
+
     private fun connection(): Connection = DriverManager.getConnection(url, username, password)
 
     private fun findMobileAppUsersByLogin(conn: Connection, login: String): List<PsgsUser> {
