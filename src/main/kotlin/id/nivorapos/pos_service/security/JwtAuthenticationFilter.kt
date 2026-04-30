@@ -44,13 +44,13 @@ class JwtAuthenticationFilter(
         val uri = "${request.method} ${request.requestURI}"
         val authHeader = request.getHeader("Authorization")
 
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            log.info("[AUTH] $uri — no Bearer token in Authorization header, proceeding as anonymous")
+        if (authHeader.isNullOrBlank()) {
+            log.info("[AUTH] $uri — no Authorization header, proceeding as anonymous")
             filterChain.doFilter(request, response)
             return
         }
 
-        val token = authHeader.substring(7)
+        val token = if (authHeader.startsWith("Bearer ", ignoreCase = true)) authHeader.substring(7).trim() else authHeader.trim()
         val tokenPreview = "${token.take(12)}..."
 
         if (SecurityContextHolder.getContext().authentication != null) {
