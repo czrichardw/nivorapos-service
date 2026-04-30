@@ -324,6 +324,8 @@ class TransactionService(
         val previousStatus = transaction.status
         val effectiveStatusForStock = request.paymentStatus ?: request.status
         transaction.status = request.status
+        if (request.cashTendered != null) transaction.cashTendered = parseBD(request.cashTendered)
+        if (request.cashChange != null) transaction.cashChange = parseBD(request.cashChange)
         transaction.modifiedBy = username
         transaction.modifiedDate = now
         transactionRepository.save(transaction)
