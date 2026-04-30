@@ -10,6 +10,8 @@ import java.time.Instant
 
 @Service
 class PsgsCredentialService(
+    @Value("\${psgs.integration.enabled:false}")
+    private val integrationEnabled: Boolean,
     @Value("\${psgs.datasource.url:}")
     private val url: String,
     @Value("\${psgs.datasource.username:}")
@@ -25,7 +27,7 @@ class PsgsCredentialService(
     private val passwordEncoder: PasswordEncoder
 ) {
 
-    fun isEnabled(): Boolean = url.isNotBlank()
+    fun isEnabled(): Boolean = integrationEnabled && url.isNotBlank()
 
     fun authenticate(login: String, rawPassword: String): PsgsCredential? {
         if (!isEnabled()) return null
