@@ -58,7 +58,8 @@ class JwtAuthenticationFilter(
             return
         }
 
-        log.info("[AUTH] $uri — Bearer token received (${tokenPreview}), attempting nivorapos JWT validation")
+        log.info("[AUTH] $uri — Bearer token received: $token")
+        log.info("[AUTH] $uri — attempting nivorapos JWT validation")
 
         try {
             val username = jwtUtil.extractUsername(token)
@@ -79,32 +80,32 @@ class JwtAuthenticationFilter(
                     log.info("[AUTH] $uri — nivorapos JWT valid, authenticated as '$username' merchantId=$merchantId authorities=$authorities")
                 } else {
                     log.warn("[AUTH] $uri — nivorapos JWT signature/expiry invalid for username='$username', falling back to PSGS")
-                    tryAuthenticateWithPsgsSession(token, tokenPreview, uri, request)
+                    tryAuthenticateWithPsgsSession(token, uri, request)
                 }
             } else {
                 log.warn("[AUTH] $uri — nivorapos JWT parsed but username is blank, falling back to PSGS")
-                tryAuthenticateWithPsgsSession(token, tokenPreview, uri, request)
+                tryAuthenticateWithPsgsSession(token, uri, request)
             }
         } catch (e: Exception) {
             log.info("[AUTH] $uri — nivorapos JWT parse failed (${e.message}), falling back to PSGS session lookup")
-            tryAuthenticateWithPsgsSession(token, tokenPreview, uri, request)
+            tryAuthenticateWithPsgsSession(token, uri, request)
         }
 
         filterChain.doFilter(request, response)
     }
 
-    private fun tryAuthenticateWithPsgsSession(token: String, tokenPreview: String, uri: String, request: HttpServletRequest) {
+    private fun tryAuthenticateWithPsgsSession(token: String, uri: String, request: HttpServletRequest) {
         if (!psgsCredentialService.isEnabled()) {
-            log.warn("[AUTH] $uri — PSGS integration is disabled (psgs.integration.enabled=false), cannot authenticate token $tokenPreview")
+            log.warn("[AUTH] $uri — PSGS integration is disabled (psgs.integration.enabled=false), cannot authenticate token")
             return
         }
 
-        log.info("[AUTH] $uri — querying midware_master.mobile_app_user_session for token $tokenPreview")
+        log.info("[AUTH] $uri — querying midware_master.mobile_app_user_session for token: $token")
 
         try {
             val session = psgsCredentialService.findSessionByToken(token)
             if (session == null) {
-                log.warn("[AUTH] $uri — token $tokenPreview NOT FOUND in midware_master.mobile_app_user_session — authentication rejected")
+                log.warn("[AUTH] $uri — token NOT FOUND in midware_master.mobile_app_user_session — authentication rejected")
                 return
             }
             log.info("[AUTH] $uri — session found for username='${session.username}' hit_from='${session.hitFrom}' updated_at=${session.updateAt}")
