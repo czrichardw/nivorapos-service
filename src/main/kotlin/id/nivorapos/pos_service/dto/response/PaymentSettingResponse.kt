@@ -1,5 +1,6 @@
 package id.nivorapos.pos_service.dto.response
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
@@ -22,4 +23,8 @@ data class PaymentSettingResponse(
     val createdDate: LocalDateTime?,
     val modifiedBy: String?,
     val modifiedDate: LocalDateTime?
-)
+) {
+    @get:JsonProperty("paymentSettingId")
+    val paymentSettingId: Long
+        get() = id
+}

@@ -1,8 +1,10 @@
 package id.nivorapos.pos_service.dto.request
 
+import com.fasterxml.jackson.annotation.JsonAlias
 import java.math.BigDecimal
 
 data class UpdateProductRequest(
+    @JsonAlias("productId")
     val id: Long,
     val name: String,
     val price: BigDecimal,

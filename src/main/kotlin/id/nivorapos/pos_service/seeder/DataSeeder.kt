@@ -687,7 +687,7 @@ class DataSeeder(
     // ─────────────────────────────────────────────────────────────
     private fun seedStock(products: List<Product>) {
         products.forEach { product ->
-            if (stockRepository.findByProductId(product.id).isEmpty) {
+            if (stockRepository.findByProductIdAndVariantIdIsNull(product.id).isEmpty) {
                 stockRepository.save(
                     Stock(
                         productId = product.id,

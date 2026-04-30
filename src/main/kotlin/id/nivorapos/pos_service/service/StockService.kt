@@ -4,7 +4,10 @@ import id.nivorapos.pos_service.dto.request.StockUpdateRequest
 import id.nivorapos.pos_service.dto.response.ApiResponse
 import id.nivorapos.pos_service.dto.response.PagedResponse
 import id.nivorapos.pos_service.dto.response.StockMovementResponse
+import id.nivorapos.pos_service.entity.Stock
 import id.nivorapos.pos_service.entity.StockMovement
+import id.nivorapos.pos_service.repository.ProductRepository
+import id.nivorapos.pos_service.repository.ProductVariantRepository
 import id.nivorapos.pos_service.repository.StockMovementRepository
 import id.nivorapos.pos_service.repository.StockRepository
 import id.nivorapos.pos_service.security.SecurityUtils
@@ -16,7 +19,9 @@ import java.time.LocalDateTime
 @Service
 class StockService(
     private val stockRepository: StockRepository,
-    private val stockMovementRepository: StockMovementRepository
+    private val stockMovementRepository: StockMovementRepository,
+    private val productRepository: ProductRepository,
+    private val productVariantRepository: ProductVariantRepository
 ) {
 
     @Transactional
@@ -25,8 +30,19 @@ class StockService(
         val username = SecurityUtils.getUsernameFromContext()
         val now = LocalDateTime.now()
 
-        val stock = stockRepository.findByProductId(request.productId)
-            .orElseThrow { RuntimeException("Stock not found for product ${request.productId}") }
+        require(request.qty > 0) { "qty must be greater than 0" }
+        val product = productRepository.findByIdAndDeletedDateIsNull(request.productId)
+            .orElseThrow { RuntimeException("Product not found") }
+        require(product.merchantId == merchantId) { "Product tidak ditemukan" }
+        require(product.productType == "VARIANT" || product.isStock) { "Product stock is disabled" }
+        require(product.productType != "VARIANT" || request.variantId != null) {
+            "variantId is required for variant product stock update"
+        }
+        require(product.productType == "VARIANT" || request.variantId == null) {
+            "variantId can only be used for variant products"
+        }
+
+        val stock = resolveStockForManualUpdate(request, username, now)
 
         val previousQty = stock.qty
         when (request.updateType.uppercase()) {
@@ -45,8 +61,10 @@ class StockService(
 
         val movement = StockMovement(
             productId = request.productId,
+            variantId = request.variantId,
             merchantId = merchantId,
             qty = request.qty,
+            stockAfter = stock.qty,
             movementType = request.updateType.uppercase(),
             movementReason = "MANUAL_UPDATE",
             createdBy = username,
@@ -58,7 +76,12 @@ class StockService(
 
         return ApiResponse.success(
             "Stock updated",
-            mapOf("productId" to request.productId, "previousQty" to previousQty, "currentQty" to stock.qty)
+            mapOf<String, Any>(
+                "productId" to request.productId,
+                "variantId" to (request.variantId ?: ""),
+                "previousQty" to previousQty,
+                "currentQty" to stock.qty
+            )
         )
     }
 
@@ -98,4 +121,41 @@ class StockService(
         createdBy = createdBy,
         createdDate = createdDate
     )
+
+    private fun resolveStockForManualUpdate(
+        request: StockUpdateRequest,
+        username: String,
+        now: LocalDateTime
+    ): Stock {
+        if (request.variantId != null) {
+            val variant = productVariantRepository.findByProductIdAndId(request.productId, request.variantId)
+                ?: throw RuntimeException("Variant not found for product ${request.productId}")
+            require(variant.isStock) { "Variant stock is disabled" }
+
+            return stockRepository.findByProductIdAndVariantId(request.productId, request.variantId).orElseGet {
+                require(request.updateType.uppercase() == "ADD") { "Stock not found for variant ${request.variantId}" }
+                stockRepository.save(
+                    Stock(
+                        productId = request.productId,
+                        variantId = request.variantId,
+                        qty = 0,
+                        createdBy = username,
+                        createdDate = now
+                    )
+                )
+            }
+        }
+
+        return stockRepository.findByProductIdAndVariantIdIsNull(request.productId).orElseGet {
+            require(request.updateType.uppercase() == "ADD") { "Stock not found for product ${request.productId}" }
+            stockRepository.save(
+                Stock(
+                    productId = request.productId,
+                    qty = 0,
+                    createdBy = username,
+                    createdDate = now
+                )
+            )
+        }
+    }
 }

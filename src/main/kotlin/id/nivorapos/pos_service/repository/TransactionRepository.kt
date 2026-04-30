@@ -23,5 +23,12 @@ interface TransactionRepository : JpaRepository<Transaction, Long> {
         endDate: LocalDateTime
     ): List<Transaction>
 
+    fun findByMerchantIdAndStatusInAndCreatedDateBetween(
+        merchantId: Long,
+        statuses: Collection<String>,
+        startDate: LocalDateTime,
+        endDate: LocalDateTime
+    ): List<Transaction>
+
     fun findByTrxId(trxId: String): Optional<Transaction>
 }

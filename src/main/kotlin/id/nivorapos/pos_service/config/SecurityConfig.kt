@@ -44,7 +44,7 @@ class SecurityConfig(
             .csrf { it.disable() }
             .authorizeHttpRequests { auth ->
                 auth
-                    .requestMatchers("/pos/auth/login", "/actuator/**").permitAll()
+                    .requestMatchers("/pos/auth/login", "/images/upload", "/images/**", "/actuator/**").permitAll()
                     .anyRequest().authenticated()
             }
             .sessionManagement { session ->

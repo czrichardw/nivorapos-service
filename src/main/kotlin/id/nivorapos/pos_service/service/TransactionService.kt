@@ -670,8 +670,7 @@ class TransactionService(
 
         val items = transactionItemRepository.findByTransactionId(transaction.id)
         items.forEach { item ->
-            val stock = stockRepository.findByProductId(item.productId)
-                .orElseThrow { RuntimeException("Stock not found for product ${item.productId}") }
+            val stock = resolveStockForTransactionItem(item) ?: return@forEach
             if (stock.qty < item.qty) {
                 throw RuntimeException("Insufficient stock for product ${item.productId}")
             }
@@ -688,6 +687,7 @@ class TransactionService(
                     outletId = transaction.outletId,
                     referenceId = transaction.id,
                     qty = item.qty,
+                    stockAfter = stock.qty,
                     movementType = STOCK_MOVEMENT_REDUCE,
                     movementReason = STOCK_MOVEMENT_TRANSACTION,
                     createdBy = username,
@@ -706,8 +706,7 @@ class TransactionService(
 
         val items = transactionItemRepository.findByTransactionId(transaction.id)
         items.forEach { item ->
-            val stock = stockRepository.findByProductId(item.productId)
-                .orElseThrow { RuntimeException("Stock not found for product ${item.productId}") }
+            val stock = resolveStockForTransactionItem(item) ?: return@forEach
             stock.qty += item.qty
             stock.modifiedBy = username
             stock.modifiedDate = now
@@ -720,6 +719,7 @@ class TransactionService(
                     outletId = transaction.outletId,
                     referenceId = transaction.id,
                     qty = item.qty,
+                    stockAfter = stock.qty,
                     movementType = STOCK_MOVEMENT_ADD,
                     movementReason = STOCK_MOVEMENT_TRANSACTION_CANCELLED,
                     note = "Restored after transaction status ${transaction.status}",
@@ -744,6 +744,26 @@ class TransactionService(
             STOCK_MOVEMENT_TRANSACTION_CANCELLED
         )
         return reduceCount > restoreCount
+    }
+
+    private fun resolveStockForTransactionItem(item: TransactionItem): Stock? {
+        val product = productRepository.findByIdAndDeletedDateIsNull(item.productId).orElse(null)
+            ?: throw RuntimeException("Product not found: ${item.productId}")
+
+        val variantId = item.variantId
+        if (variantId != null) {
+            val variant = productVariantRepository.findByProductIdAndId(item.productId, variantId)
+                ?: throw RuntimeException("Variant $variantId not found for product ${item.productId}")
+            if (!variant.isStock) return null
+
+            return stockRepository.findByProductIdAndVariantId(item.productId, variantId)
+                .orElseThrow { RuntimeException("Stock not found for product ${item.productId} variant $variantId") }
+        }
+
+        if (product.productType == "VARIANT") return null
+        if (!product.isStock) return null
+        return stockRepository.findByProductIdAndVariantIdIsNull(item.productId)
+            .orElseThrow { RuntimeException("Stock not found for product ${item.productId}") }
     }
 
     private fun isPaidStatus(status: String?): Boolean =

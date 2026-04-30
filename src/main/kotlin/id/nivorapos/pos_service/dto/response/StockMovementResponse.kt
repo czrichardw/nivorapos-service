@@ -1,5 +1,6 @@
 package id.nivorapos.pos_service.dto.response
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.time.LocalDateTime
 
 data class StockMovementResponse(
@@ -14,4 +15,8 @@ data class StockMovementResponse(
     val note: String?,
     val createdBy: String?,
     val createdDate: LocalDateTime?
-)
+) {
+    @get:JsonProperty("localDateTime")
+    val localDateTime: LocalDateTime?
+        get() = createdDate
+}

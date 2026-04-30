@@ -22,6 +22,7 @@ class ProductService(
     private val categoryRepository: CategoryRepository,
     private val merchantRepository: MerchantRepository,
     private val stockRepository: StockRepository,
+    private val stockMovementRepository: StockMovementRepository,
     private val paymentSettingRepository: PaymentSettingRepository,
     private val taxRepository: TaxRepository,
     private val productVariantGroupRepository: ProductVariantGroupRepository,
@@ -85,6 +86,7 @@ class ProductService(
         require(productType in listOf("SIMPLE", "VARIANT", "MODIFIER")) {
             "productType harus SIMPLE, VARIANT, atau MODIFIER"
         }
+        require(request.qty >= 0) { "qty must be greater than or equal to 0" }
 
         val paymentSetting = paymentSettingRepository.findByMerchantId(merchantId).orElse(null)
         val calculatedPrice = calculateFinalPrice(
@@ -127,7 +129,18 @@ class ProductService(
                 modifiedBy = username,
                 modifiedDate = now
             )
-            stockRepository.save(stock)
+            val savedStock = stockRepository.save(stock)
+            recordStockMovement(
+                productId = saved.id,
+                variantId = null,
+                merchantId = merchantId,
+                qty = request.qty,
+                stockAfter = savedStock.qty,
+                movementType = STOCK_MOVEMENT_ADD,
+                movementReason = STOCK_MOVEMENT_INITIAL,
+                username = username,
+                now = now
+            )
         }
 
         request.categoryIds.forEach { catId ->
@@ -179,6 +192,8 @@ class ProductService(
         product.modifiedDate = now
 
         val saved = productRepository.save(product)
+
+        syncBaseProductStock(saved, request.isStock, username, now)
 
         productCategoryRepository.deleteByProductId(saved.id)
         request.categoryIds.forEach { catId ->
@@ -339,7 +354,18 @@ class ProductService(
                 modifiedBy = username,
                 modifiedDate = now
             )
-            stockRepository.save(stock)
+            val savedStock = stockRepository.save(stock)
+            recordStockMovement(
+                productId = productId,
+                variantId = saved.id,
+                merchantId = product.merchantId,
+                qty = request.qty,
+                stockAfter = savedStock.qty,
+                movementType = STOCK_MOVEMENT_ADD,
+                movementReason = STOCK_MOVEMENT_INITIAL,
+                username = username,
+                now = now
+            )
         }
 
         return ApiResponse.success("Variant created", buildVariantResponse(saved))
@@ -368,6 +394,7 @@ class ProductService(
         variant.modifiedDate = LocalDateTime.now()
 
         val saved = productVariantRepository.save(variant)
+        syncVariantStock(productId, saved.id, request.isStock, SecurityUtils.getUsernameFromContext(), LocalDateTime.now())
         return ApiResponse.success("Variant updated", buildVariantResponse(saved))
     }
 
@@ -478,8 +505,8 @@ class ProductService(
         val productCategories = productCategoryRepository.findByProductId(product.id)
 
         val qty = when {
-            !product.isStock -> 0
             product.productType == "VARIANT" -> stockRepository.findAllByProductId(product.id).sumOf { it.qty }
+            !product.isStock -> 0
             else -> stockRepository.findByProductIdAndVariantIdIsNull(product.id).map { it.qty }.orElse(0)
         }
 
@@ -532,6 +559,7 @@ class ProductService(
 
         return ProductResponse(
             id = product.id,
+            merchantId = product.merchantId,
             name = product.name,
             productType = product.productType,
             sku = product.sku,
@@ -620,6 +648,136 @@ class ProductService(
         if (existing.isNotEmpty()) productModifierRepository.saveAll(existing)
     }
 
+    private fun syncBaseProductStock(product: Product, isStockEnabled: Boolean, username: String, now: LocalDateTime) {
+        if (product.productType == "VARIANT") return
+
+        val existing = stockRepository.findByProductIdAndVariantIdIsNull(product.id).orElse(null)
+        if (isStockEnabled) {
+            if (existing == null) {
+                val savedStock = stockRepository.save(
+                    Stock(
+                        productId = product.id,
+                        qty = 0,
+                        createdBy = username,
+                        createdDate = now,
+                        modifiedBy = username,
+                        modifiedDate = now
+                    )
+                )
+                recordStockMovement(
+                    productId = product.id,
+                    variantId = null,
+                    merchantId = product.merchantId,
+                    qty = 0,
+                    stockAfter = savedStock.qty,
+                    movementType = STOCK_MOVEMENT_ADD,
+                    movementReason = STOCK_MOVEMENT_INITIAL,
+                    username = username,
+                    now = now
+                )
+            }
+        } else if (existing != null && existing.qty != 0) {
+            val adjustedQty = existing.qty
+            existing.qty = 0
+            existing.modifiedBy = username
+            existing.modifiedDate = now
+            stockRepository.save(existing)
+            recordStockMovement(
+                productId = product.id,
+                variantId = null,
+                merchantId = product.merchantId,
+                qty = adjustedQty,
+                stockAfter = 0,
+                movementType = STOCK_MOVEMENT_SET,
+                movementReason = STOCK_MOVEMENT_STOCK_DISABLED,
+                username = username,
+                now = now
+            )
+        }
+    }
+
+    private fun syncVariantStock(
+        productId: Long,
+        variantId: Long,
+        isStockEnabled: Boolean,
+        username: String,
+        now: LocalDateTime
+    ) {
+        val product = productRepository.findByIdAndDeletedDateIsNull(productId).orElse(null) ?: return
+        val existing = stockRepository.findByProductIdAndVariantId(productId, variantId).orElse(null)
+        if (isStockEnabled) {
+            if (existing == null) {
+                val savedStock = stockRepository.save(
+                    Stock(
+                        productId = productId,
+                        variantId = variantId,
+                        qty = 0,
+                        createdBy = username,
+                        createdDate = now,
+                        modifiedBy = username,
+                        modifiedDate = now
+                    )
+                )
+                recordStockMovement(
+                    productId = productId,
+                    variantId = variantId,
+                    merchantId = product.merchantId,
+                    qty = 0,
+                    stockAfter = savedStock.qty,
+                    movementType = STOCK_MOVEMENT_ADD,
+                    movementReason = STOCK_MOVEMENT_INITIAL,
+                    username = username,
+                    now = now
+                )
+            }
+        } else if (existing != null && existing.qty != 0) {
+            val adjustedQty = existing.qty
+            existing.qty = 0
+            existing.modifiedBy = username
+            existing.modifiedDate = now
+            stockRepository.save(existing)
+            recordStockMovement(
+                productId = productId,
+                variantId = variantId,
+                merchantId = product.merchantId,
+                qty = adjustedQty,
+                stockAfter = 0,
+                movementType = STOCK_MOVEMENT_SET,
+                movementReason = STOCK_MOVEMENT_STOCK_DISABLED,
+                username = username,
+                now = now
+            )
+        }
+    }
+
+    private fun recordStockMovement(
+        productId: Long,
+        variantId: Long?,
+        merchantId: Long,
+        qty: Int,
+        stockAfter: Int,
+        movementType: String,
+        movementReason: String,
+        username: String,
+        now: LocalDateTime
+    ) {
+        stockMovementRepository.save(
+            StockMovement(
+                productId = productId,
+                variantId = variantId,
+                merchantId = merchantId,
+                qty = qty,
+                stockAfter = stockAfter,
+                movementType = movementType,
+                movementReason = movementReason,
+                createdBy = username,
+                createdDate = now,
+                modifiedBy = username,
+                modifiedDate = now
+            )
+        )
+    }
+
     private fun calculateItemTaxAmount(
         basePrice: BigDecimal,
         isTaxable: Boolean,
@@ -659,5 +817,12 @@ class ProductService(
             basePrice.add(basePrice.multiply(tax.percentage).divide(hundred, 2, RoundingMode.HALF_UP))
                 .setScale(2, RoundingMode.HALF_UP)
         }
+    }
+
+    companion object {
+        private const val STOCK_MOVEMENT_ADD = "ADD"
+        private const val STOCK_MOVEMENT_SET = "SET"
+        private const val STOCK_MOVEMENT_INITIAL = "INITIAL_STOCK"
+        private const val STOCK_MOVEMENT_STOCK_DISABLED = "STOCK_DISABLED"
     }
 }

@@ -14,10 +14,24 @@ class AuthService(
     private val userRepository: UserRepository,
     private val userDetailRepository: UserDetailRepository,
     private val passwordEncoder: PasswordEncoder,
-    private val jwtUtil: JwtUtil
+    private val jwtUtil: JwtUtil,
+    private val psgsCredentialService: PsgsCredentialService,
+    private val psgsPosProvisioningService: PsgsPosProvisioningService
 ) {
 
     fun login(request: LoginRequest): ApiResponse<LoginResponse> {
+        if (psgsCredentialService.isEnabled()) {
+            val credential = psgsCredentialService.authenticate(request.username, request.password)
+                ?: throw RuntimeException("Invalid username or password")
+            val provisioned = psgsPosProvisioningService.provision(credential)
+            return buildLoginResponse(
+                username = provisioned.user.username,
+                fullName = provisioned.user.fullName,
+                merchantId = provisioned.merchant.id,
+                token = credential.session.token
+            )
+        }
+
         val user = userRepository.findByUsername(request.username)
             .orElseThrow { RuntimeException("Invalid username or password") }
 
@@ -32,12 +46,19 @@ class AuthService(
         val userDetail = userDetailRepository.findByUsername(request.username).orElse(null)
         val merchantId = userDetail?.merchantId
 
-        val token = jwtUtil.generateToken(user.username, merchantId)
+        return buildLoginResponse(user.username, user.fullName, merchantId, jwtUtil.generateToken(user.username, merchantId))
+    }
 
+    private fun buildLoginResponse(
+        username: String,
+        fullName: String?,
+        merchantId: Long?,
+        token: String
+    ): ApiResponse<LoginResponse> {
         val response = LoginResponse(
             token = token,
-            username = user.username,
-            fullName = user.fullName,
+            username = username,
+            fullName = fullName,
             merchantId = merchantId
         )
 

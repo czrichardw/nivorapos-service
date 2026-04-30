@@ -1,5 +1,6 @@
 package id.nivorapos.pos_service.dto.response
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import java.math.BigDecimal
 
 data class ProductSalesSummary(
@@ -12,7 +13,15 @@ data class PaymentSummary(
     val paymentMethod: String,
     val totalAmount: BigDecimal,
     val totalTransactions: Long
-)
+) {
+    @get:JsonProperty("paymentName")
+    val paymentName: String
+        get() = paymentMethod
+
+    @get:JsonProperty("totalAmountTransactions")
+    val totalAmountTransactions: BigDecimal
+        get() = totalAmount
+}
 
 data class SummaryReportResponse(
     val totalTransactions: Long,
@@ -20,4 +29,16 @@ data class SummaryReportResponse(
     val productSales: List<ProductSalesSummary>,
     val internalPayments: List<PaymentSummary>,
     val externalPayments: List<PaymentSummary>
-)
+) {
+    @get:JsonProperty("productList")
+    val productList: List<ProductSalesSummary>
+        get() = productSales
+
+    @get:JsonProperty("paymentListInternal")
+    val paymentListInternal: List<PaymentSummary>
+        get() = internalPayments
+
+    @get:JsonProperty("paymentListExternal")
+    val paymentListExternal: List<PaymentSummary>
+        get() = externalPayments
+}

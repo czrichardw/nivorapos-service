@@ -24,8 +24,8 @@ class ReportService(
         val start = startDate ?: LocalDateTime.of(2000, 1, 1, 0, 0)
         val end = endDate ?: LocalDateTime.now().plusDays(1)
 
-        val transactions = transactionRepository.findByMerchantIdAndCreatedDateBetween(
-            merchantId, start, end
+        val transactions = transactionRepository.findByMerchantIdAndStatusInAndCreatedDateBetween(
+            merchantId, SUCCESS_STATUSES, start, end
         )
 
         val totalTransactions = transactions.size.toLong()
@@ -92,5 +92,9 @@ class ReportService(
         )
 
         return ApiResponse.success("Summary report retrieved", report)
+    }
+
+    companion object {
+        private val SUCCESS_STATUSES = listOf("PAID", "SUCCESS")
     }
 }
