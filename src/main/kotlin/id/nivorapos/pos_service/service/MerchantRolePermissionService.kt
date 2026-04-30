@@ -21,12 +21,12 @@ class MerchantRolePermissionService(
 
     fun listByMerchant(merchantId: Long): ApiResponse<List<MerchantRolePermissionResponse>> {
         val overrides = merchantRolePermissionRepository.findByMerchantId(merchantId)
-        return ApiResponse.success("Overrides retrieved", overrides.map { toResponse(it) })
+        return ApiResponse.success("Overrides retrieved", toResponses(overrides))
     }
 
     fun listByMerchantAndRole(merchantId: Long, roleId: Long): ApiResponse<List<MerchantRolePermissionResponse>> {
         val overrides = merchantRolePermissionRepository.findByMerchantIdAndRoleId(merchantId, roleId)
-        return ApiResponse.success("Overrides retrieved", overrides.map { toResponse(it) })
+        return ApiResponse.success("Overrides retrieved", toResponses(overrides))
     }
 
     fun getEffectivePermissions(merchantId: Long, roleId: Long): ApiResponse<EffectivePermissionResponse> {
@@ -73,8 +73,7 @@ class MerchantRolePermissionService(
         permissionRepository.findById(request.permissionId).orElseThrow { RuntimeException("Permission not found") }
 
         val existing = merchantRolePermissionRepository
-            .findByMerchantIdAndRoleId(merchantId, request.roleId)
-            .firstOrNull { it.permissionId == request.permissionId }
+            .findByMerchantIdAndRoleIdAndPermissionId(merchantId, request.roleId, request.permissionId)
 
         val saved = if (existing != null) {
             existing.isGranted = request.isGranted
@@ -127,5 +126,29 @@ class MerchantRolePermissionService(
             isGranted = mrp.isGranted,
             createdDate = mrp.createdDate
         )
+    }
+
+    private fun toResponses(overrides: List<MerchantRolePermission>): List<MerchantRolePermissionResponse> {
+        if (overrides.isEmpty()) return emptyList()
+        val rolesById = roleRepository.findAllById(overrides.map { it.roleId }.toSet())
+            .associateBy { it.id }
+        val permsById = permissionRepository.findAllById(overrides.map { it.permissionId }.toSet())
+            .associateBy { it.id }
+        return overrides.map { mrp ->
+            val role = rolesById[mrp.roleId]
+            val permission = permsById[mrp.permissionId]
+            MerchantRolePermissionResponse(
+                id = mrp.id,
+                merchantId = mrp.merchantId,
+                roleId = mrp.roleId,
+                roleCode = role?.code,
+                roleName = role?.name,
+                permissionId = mrp.permissionId,
+                permissionCode = permission?.code,
+                permissionName = permission?.name,
+                isGranted = mrp.isGranted,
+                createdDate = mrp.createdDate
+            )
+        }
     }
 }

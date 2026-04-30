@@ -17,26 +17,34 @@ class PermissionResolver(
     fun resolve(username: String, merchantId: Long?): Set<SimpleGrantedAuthority> {
         val user = userRepository.findByUsername(username).orElse(null) ?: return emptySet()
 
-        val userRoles = userRoleRepository.findByUserId(user.id)
+        val roleIds = userRoleRepository.findByUserId(user.id)
+            .asSequence()
             .filter { it.scopeId == null || it.scopeId == merchantId }
+            .map { it.roleId }
+            .toSet()
+
+        if (roleIds.isEmpty()) return emptySet()
+
+        val rolePermsByRole = rolePermissionRepository.findByRoleIdIn(roleIds)
+            .groupBy({ it.roleId }, { it.permissionId })
+
+        val overridesByRole = if (merchantId != null) {
+            merchantRolePermissionRepository
+                .findByMerchantIdAndRoleIdIn(merchantId, roleIds)
+                .groupBy { it.roleId }
+        } else emptyMap()
 
         val effectivePermissionIds = mutableSetOf<Long>()
-
-        userRoles.forEach { userRole ->
-            val globalIds = rolePermissionRepository.findByRoleId(userRole.roleId)
-                .map { it.permissionId }.toMutableSet()
-
-            if (merchantId != null) {
-                merchantRolePermissionRepository
-                    .findByMerchantIdAndRoleId(merchantId, userRole.roleId)
-                    .forEach { override ->
-                        if (override.isGranted) globalIds.add(override.permissionId)
-                        else globalIds.remove(override.permissionId)
-                    }
+        for (roleId in roleIds) {
+            val perRole = rolePermsByRole[roleId].orEmpty().toMutableSet()
+            overridesByRole[roleId]?.forEach { override ->
+                if (override.isGranted) perRole.add(override.permissionId)
+                else perRole.remove(override.permissionId)
             }
-
-            effectivePermissionIds.addAll(globalIds)
+            effectivePermissionIds.addAll(perRole)
         }
+
+        if (effectivePermissionIds.isEmpty()) return emptySet()
 
         return permissionRepository.findAllById(effectivePermissionIds)
             .map { SimpleGrantedAuthority(it.code) }.toSet()

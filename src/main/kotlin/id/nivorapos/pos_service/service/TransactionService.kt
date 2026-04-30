@@ -85,13 +85,16 @@ class TransactionService(
         val now = LocalDateTime.now()
 
         // Build discountItems early — needed for discount/promo resolution and SC basis
+        val productIds = request.items.map { it.productId }.distinct()
+        val categoryIdsByProduct = if (productIds.isEmpty()) emptyMap()
+            else productCategoryRepository.findByProductIdIn(productIds)
+                .groupBy({ it.productId }, { it.categoryId })
         val discountItems = request.items.map { itemReq ->
-            val catIds = productCategoryRepository.findByProductId(itemReq.productId).map { it.categoryId }
             DiscountValidateItemRequest(
                 productId = itemReq.productId,
                 qty = itemReq.qty,
                 price = parseBD(itemReq.price),
-                categoryIds = catIds
+                categoryIds = categoryIdsByProduct[itemReq.productId].orEmpty()
             )
         }
 
@@ -119,8 +122,23 @@ class TransactionService(
             items = discountItems
         )
 
+        // Pre-fetch all per-item entities once to avoid N+1 in compute/validate and item save
+        val taxIds = request.items.asSequence().mapNotNull { it.taxId }.toSet()
+        val variantIds = request.items.asSequence().mapNotNull { it.variantId }.toSet()
+        val modifierIds = request.items.asSequence().flatMap { it.modifierIds.asSequence() }.toSet()
+        val taxesById = if (taxIds.isEmpty()) emptyMap()
+            else taxRepository.findAllById(taxIds).associateBy { it.id }
+        val productsById = if (productIds.isEmpty()) emptyMap()
+            else productRepository.findByIdInAndDeletedDateIsNull(productIds).associateBy { it.id }
+        val variantsById = if (variantIds.isEmpty()) emptyMap()
+            else productVariantRepository.findAllById(variantIds).associateBy { it.id }
+        val modifiersById = if (modifierIds.isEmpty()) emptyMap()
+            else productModifierRepository.findAllById(modifierIds).associateBy { it.id }
+
         // Validate and compute amounts server-side (discount/promo needed for AFTER_DISCOUNT SC basis)
-        val (validationError, computed) = computeAndValidate(request, merchantId, discountAmount, promoAmount)
+        val (validationError, computed) = computeAndValidate(
+            request, merchantId, discountAmount, promoAmount, taxesById
+        )
         validationError?.let { throw IllegalArgumentException(it) }
         val amounts = computed!!
 
@@ -188,19 +206,20 @@ class TransactionService(
         }
 
         // Save items
+        val pendingModifiers = ArrayList<TransactionItemModifier>(request.items.sumOf { it.modifierIds.size })
         request.items.forEach { itemReq ->
-            val product = productRepository.findByIdAndDeletedDateIsNull(itemReq.productId).orElse(null)
-            val tax = itemReq.taxId?.let { taxRepository.findById(it).orElse(null) }
+            val product = productsById[itemReq.productId]
+            val tax = itemReq.taxId?.let { taxesById[it] }
             val itemPrice = parseBD(itemReq.price)
             val totalPrice = itemPrice.multiply(BigDecimal(itemReq.qty))
             val snapshot = if (product != null) objectMapper.writeValueAsString(product) else null
 
             // Resolve variant
-            val variant = itemReq.variantId?.let { productVariantRepository.findById(it).orElse(null) }
+            val variant = itemReq.variantId?.let { variantsById[it] }
             validateVariantSelection(itemReq.productId, itemReq.variantId)
 
             // Resolve modifiers
-            val selectedModifiers = itemReq.modifierIds.mapNotNull { productModifierRepository.findById(it).orElse(null) }
+            val selectedModifiers = itemReq.modifierIds.mapNotNull { modifiersById[it] }
             validateModifierSelection(itemReq.productId, selectedModifiers.map { it.id })
 
             val variantAdditionalPrice = variant?.additionalPrice ?: BigDecimal.ZERO
@@ -229,9 +248,9 @@ class TransactionService(
             )
             val savedItem = transactionItemRepository.save(item)
 
-            // Save modifier selections
+            // Collect modifier selections; batch-saved after the loop
             selectedModifiers.forEach { modifier ->
-                transactionItemModifierRepository.save(
+                pendingModifiers.add(
                     TransactionItemModifier(
                         transactionItemId = savedItem.id,
                         modifierId = modifier.id,
@@ -243,6 +262,9 @@ class TransactionService(
                 )
             }
 
+        }
+        if (pendingModifiers.isNotEmpty()) {
+            transactionItemModifierRepository.saveAll(pendingModifiers)
         }
 
         if (isPaidStatus(savedTrx.status)) {
@@ -364,8 +386,13 @@ class TransactionService(
             transactionQueueRepository.findById(it).orElse(null)?.queueNumber
         }
         val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-        val items = transactionItemRepository.findByTransactionId(transaction.id).map { item ->
-            val modifiers = transactionItemModifierRepository.findByTransactionItemId(item.id).map {
+        val rawItems = transactionItemRepository.findByTransactionId(transaction.id)
+        val modifiersByItemId = if (rawItems.isEmpty()) emptyMap()
+            else transactionItemModifierRepository
+                .findByTransactionItemIdIn(rawItems.map { it.id })
+                .groupBy { it.transactionItemId }
+        val items = rawItems.map { item ->
+            val modifiers = modifiersByItemId[item.id].orEmpty().map {
                 TransactionItemModifierResponse(
                     modifierId = it.modifierId,
                     modifierName = it.modifierName,
@@ -459,7 +486,8 @@ class TransactionService(
         request: TransactionRequest,
         merchantId: Long,
         discountAmount: BigDecimal = BigDecimal.ZERO,
-        promoAmount: BigDecimal = BigDecimal.ZERO
+        promoAmount: BigDecimal = BigDecimal.ZERO,
+        taxesById: Map<Long, Tax> = emptyMap()
     ): Pair<String?, ComputedAmounts?> {
         val tolerance = BigDecimal("1.00")
         val paymentSetting = paymentSettingRepository.findByMerchantId(merchantId).orElse(null)
@@ -478,7 +506,7 @@ class TransactionService(
 
             val clientTaxAmount = parseBD(itemReq.taxAmount)
             if (itemReq.taxId != null) {
-                val tax = taxRepository.findById(itemReq.taxId).orElse(null)
+                val tax = taxesById[itemReq.taxId] ?: taxRepository.findById(itemReq.taxId).orElse(null)
                 if (tax != null && tax.percentage > BigDecimal.ZERO) {
                     val expectedTaxAmount = if (isPriceIncludeTax) {
                         itemTotalPrice.multiply(tax.percentage)
@@ -669,18 +697,20 @@ class TransactionService(
         }
 
         val items = transactionItemRepository.findByTransactionId(transaction.id)
+        if (items.isEmpty()) return
+        val ctx = loadStockResolutionContext(items)
+        val movements = ArrayList<StockMovement>(items.size)
         items.forEach { item ->
-            val stock = resolveStockForTransactionItem(item) ?: return@forEach
+            val stock = resolveStockFromContext(item, ctx) ?: return@forEach
             if (stock.qty < item.qty) {
                 throw RuntimeException("Insufficient stock for product ${item.productId}")
             }
-
             stock.qty -= item.qty
             stock.modifiedBy = username
             stock.modifiedDate = now
             stockRepository.save(stock)
 
-            stockMovementRepository.save(
+            movements.add(
                 StockMovement(
                     productId = item.productId,
                     merchantId = transaction.merchantId,
@@ -697,6 +727,7 @@ class TransactionService(
                 )
             )
         }
+        if (movements.isNotEmpty()) stockMovementRepository.saveAll(movements)
     }
 
     private fun restoreStockForTransaction(transaction: Transaction, username: String, now: LocalDateTime) {
@@ -705,14 +736,17 @@ class TransactionService(
         }
 
         val items = transactionItemRepository.findByTransactionId(transaction.id)
+        if (items.isEmpty()) return
+        val ctx = loadStockResolutionContext(items)
+        val movements = ArrayList<StockMovement>(items.size)
         items.forEach { item ->
-            val stock = resolveStockForTransactionItem(item) ?: return@forEach
+            val stock = resolveStockFromContext(item, ctx) ?: return@forEach
             stock.qty += item.qty
             stock.modifiedBy = username
             stock.modifiedDate = now
             stockRepository.save(stock)
 
-            stockMovementRepository.save(
+            movements.add(
                 StockMovement(
                     productId = item.productId,
                     merchantId = transaction.merchantId,
@@ -730,6 +764,44 @@ class TransactionService(
                 )
             )
         }
+        if (movements.isNotEmpty()) stockMovementRepository.saveAll(movements)
+    }
+
+    private data class StockResolutionContext(
+        val productsById: Map<Long, Product>,
+        val variantsById: Map<Long, ProductVariant>,
+        val stocksByProductIdAndVariantId: Map<Pair<Long, Long?>, Stock>
+    )
+
+    private fun loadStockResolutionContext(items: List<TransactionItem>): StockResolutionContext {
+        val productIds = items.map { it.productId }.toSet()
+        val variantIds = items.mapNotNullTo(mutableSetOf()) { it.variantId }
+        val products = productRepository.findByIdInAndDeletedDateIsNull(productIds).associateBy { it.id }
+        val variants = if (variantIds.isEmpty()) emptyMap()
+            else productVariantRepository.findAllById(variantIds).associateBy { it.id }
+        val stocks = stockRepository.findByProductIdIn(productIds.toList())
+            .associateBy { it.productId to it.variantId }
+        return StockResolutionContext(products, variants, stocks)
+    }
+
+    private fun resolveStockFromContext(item: TransactionItem, ctx: StockResolutionContext): Stock? {
+        val product = ctx.productsById[item.productId]
+            ?: throw RuntimeException("Product not found: ${item.productId}")
+
+        val variantId = item.variantId
+        if (variantId != null) {
+            val variant = ctx.variantsById[variantId]?.takeIf { it.productId == item.productId }
+                ?: throw RuntimeException("Variant $variantId not found for product ${item.productId}")
+            if (!variant.isStock) return null
+
+            return ctx.stocksByProductIdAndVariantId[item.productId to variantId]
+                ?: throw RuntimeException("Stock not found for product ${item.productId} variant $variantId")
+        }
+
+        if (product.productType == "VARIANT") return null
+        if (!product.isStock) return null
+        return ctx.stocksByProductIdAndVariantId[item.productId to null]
+            ?: throw RuntimeException("Stock not found for product ${item.productId}")
     }
 
     private fun hasActiveStockReduction(transactionId: Long): Boolean {
@@ -744,26 +816,6 @@ class TransactionService(
             STOCK_MOVEMENT_TRANSACTION_CANCELLED
         )
         return reduceCount > restoreCount
-    }
-
-    private fun resolveStockForTransactionItem(item: TransactionItem): Stock? {
-        val product = productRepository.findByIdAndDeletedDateIsNull(item.productId).orElse(null)
-            ?: throw RuntimeException("Product not found: ${item.productId}")
-
-        val variantId = item.variantId
-        if (variantId != null) {
-            val variant = productVariantRepository.findByProductIdAndId(item.productId, variantId)
-                ?: throw RuntimeException("Variant $variantId not found for product ${item.productId}")
-            if (!variant.isStock) return null
-
-            return stockRepository.findByProductIdAndVariantId(item.productId, variantId)
-                .orElseThrow { RuntimeException("Stock not found for product ${item.productId} variant $variantId") }
-        }
-
-        if (product.productType == "VARIANT") return null
-        if (!product.isStock) return null
-        return stockRepository.findByProductIdAndVariantIdIsNull(item.productId)
-            .orElseThrow { RuntimeException("Stock not found for product ${item.productId}") }
     }
 
     private fun isPaidStatus(status: String?): Boolean =
