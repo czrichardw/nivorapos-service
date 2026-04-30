@@ -32,8 +32,6 @@ class RequestResponseLoggingFilter(
         response: HttpServletResponse,
         filterChain: FilterChain
     ) {
-        // Honor inbound X-Request-Id (e.g., from gateway/client correlation),
-        // otherwise mint a fresh one.
         val requestId = request.getHeader(REQUEST_ID_HEADER)
             ?.takeIf { it.isNotBlank() }
             ?: UUID.randomUUID().toString()
@@ -50,11 +48,25 @@ class RequestResponseLoggingFilter(
         val maxQueryBefore = if (statsOn) statistics!!.queryExecutionMaxTime else 0L
 
         val startTime = System.currentTimeMillis()
+        var status = 0
+        var responseBodySnapshot: ByteArray = EMPTY_BYTES
 
         try {
             filterChain.doFilter(wrappedRequest, wrappedResponse)
-
+        } finally {
             val duration = System.currentTimeMillis() - startTime
+            status = wrappedResponse.status
+            responseBodySnapshot = wrappedResponse.contentAsByteArray
+
+            // 1) Push the cached body to the underlying stream and flush it
+            //    BEFORE logging. This way the client's TTFB is bounded by
+            //    the controller, not by how slow our logging happens to be.
+            try {
+                wrappedResponse.copyBodyToResponse()
+                response.flushBuffer()
+            } catch (_: Exception) {
+                // client may have disconnected — logging still proceeds below
+            }
 
             val perfNote = if (statsOn) {
                 val prepared = statistics!!.prepareStatementCount - preparedBefore
@@ -64,12 +76,14 @@ class RequestResponseLoggingFilter(
                 "  Stmts: $prepared | Queries: $queries | Slowest query: ${slowest}ms"
             } else null
 
-            logRequest(wrappedRequest, requestId)
-            logResponse(wrappedResponse, duration, perfNote, requestId)
-
-            wrappedResponse.copyBodyToResponse()
-        } finally {
-            MDC.remove(MDC_KEY)
+            // 2) Logging happens AFTER the client has been served. With async
+            //    appender (logback-spring.xml) these calls return immediately.
+            try {
+                logRequest(wrappedRequest, requestId)
+                logResponse(status, responseBodySnapshot, duration, perfNote, requestId)
+            } finally {
+                MDC.remove(MDC_KEY)
+            }
         }
     }
 
@@ -80,10 +94,7 @@ class RequestResponseLoggingFilter(
             }
         }
 
-        val body = request.contentAsByteArray
-            .takeIf { it.isNotEmpty() }
-            ?.let { String(it, Charsets.UTF_8) }
-            ?: "(empty)"
+        val body = decodeAndTruncate(request.contentAsByteArray)
 
         log.info("""
             |
@@ -96,30 +107,38 @@ class RequestResponseLoggingFilter(
     }
 
     private fun logResponse(
-        response: ContentCachingResponseWrapper,
+        status: Int,
+        bodyBytes: ByteArray,
         duration: Long,
         perfNote: String?,
         requestId: String
     ) {
-        val body = response.contentAsByteArray
-            .takeIf { it.isNotEmpty() }
-            ?.let { String(it, Charsets.UTF_8) }
-            ?: "(empty)"
-
+        val body = decodeAndTruncate(bodyBytes)
         val perfLine = perfNote?.let { "\n            |$it" } ?: ""
 
         log.info("""
             |
             |<<< RESPONSE [$requestId] <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-            |  Status : ${response.status}
+            |  Status : $status
             |  Duration: ${duration}ms$perfLine
             |  Body: $body
             |<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
         """.trimMargin())
     }
 
+    private fun decodeAndTruncate(bytes: ByteArray): String {
+        if (bytes.isEmpty()) return "(empty)"
+        val total = bytes.size
+        val cap = MAX_BODY_LOG_BYTES.coerceAtMost(total)
+        val text = String(bytes, 0, cap, Charsets.UTF_8)
+        return if (total > cap) "$text... (truncated, $total bytes total)" else text
+    }
+
     companion object {
         const val REQUEST_ID_HEADER = "X-Request-Id"
         const val MDC_KEY = "requestId"
+        // Cap each body in the log to 2 KB. Tunable via subclass / config later.
+        private const val MAX_BODY_LOG_BYTES = 2048
+        private val EMPTY_BYTES = ByteArray(0)
     }
 }

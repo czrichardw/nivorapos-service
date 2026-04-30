@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Honor Spring Boot's logging.* properties (level, pattern, file path) -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <!--
+        Wrap CONSOLE in an AsyncAppender. log.info(...) calls enqueue and
+        return; a background thread drains the queue. Keeps slow Docker
+        log drivers from blocking request threads.
+    -->
+    <appender name="ASYNC_CONSOLE" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="CONSOLE"/>
+        <queueSize>4096</queueSize>
+        <!-- 0 = never block; messages over the queue limit are dropped -->
+        <discardingThreshold>0</discardingThreshold>
+        <!-- TRACE/DEBUG/INFO are eligible to be dropped under pressure;
+             WARN/ERROR are always kept (default) -->
+        <neverBlock>true</neverBlock>
+        <includeCallerData>false</includeCallerData>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="ASYNC_CONSOLE"/>
+    </root>
+</configuration>
