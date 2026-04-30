@@ -22,8 +22,6 @@ class PsgsCredentialService(
     private val driverClassName: String,
     @Value("\${psgs.datasource.master-schema:midware_master}")
     private val masterSchema: String,
-    @Value("\${psgs.datasource.cashlez-schema:cashlez_new}")
-    private val cashlezSchema: String,
     private val passwordEncoder: PasswordEncoder
 ) {
 
@@ -32,13 +30,10 @@ class PsgsCredentialService(
     fun authenticate(login: String, rawPassword: String): PsgsCredential? {
         if (!isEnabled()) return null
         validateSchemaName(masterSchema)
-        validateSchemaName(cashlezSchema)
         Class.forName(driverClassName)
 
         connection().use { conn ->
-            val candidates = findUsersByLogin(conn, login).ifEmpty {
-                findUsersByMobileUser(conn, login)
-            }
+            val candidates = findUsersByLogin(conn, login)
 
             val matchedUser = candidates.firstOrNull { user ->
                     user.enabled != false &&
@@ -96,70 +91,6 @@ class PsgsCredentialService(
             stmt.setString(1, login)
             stmt.setString(2, login)
             stmt.setString(3, login)
-            stmt.executeQuery().use { rs -> return rs.toPsgsUsers() }
-        }
-    }
-
-    private fun findUsersByMobileUser(conn: Connection, login: String): List<PsgsUser> {
-        val sql = """
-            select mu.muid, mu.email, mu.contact, mu.merchant_fk
-            from $cashlezSchema.mobile_user mu
-            where mu.muid = ? or mu.email = ? or mu.contact = ?
-            order by mu.id asc
-        """.trimIndent()
-
-        val linkedUsers = mutableListOf<PsgsUser>()
-        conn.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, login)
-            stmt.setString(2, login)
-            stmt.setString(3, login)
-            stmt.executeQuery().use { rs ->
-                while (rs.next()) {
-                    linkedUsers.addAll(
-                        findUsersByMobileUserIdentity(
-                            conn = conn,
-                            merchantId = rs.getNullableLong("merchant_fk"),
-                            muid = rs.getString("muid"),
-                            email = rs.getString("email"),
-                            contact = rs.getString("contact")
-                        )
-                    )
-                }
-            }
-        }
-        return linkedUsers.distinctBy { it.id }
-    }
-
-    private fun findUsersByMobileUserIdentity(
-        conn: Connection,
-        merchantId: Long?,
-        muid: String?,
-        email: String?,
-        contact: String?
-    ): List<PsgsUser> {
-        if (merchantId == null) return emptyList()
-
-        val sql = """
-            select id, username, name, email, password, enabled, merchant_id, phone, deleted_at
-            from $masterSchema.users
-            where deleted_at is null
-              and merchant_id = ?
-              and (
-                    (? is not null and username = ?)
-                 or (? is not null and email = ?)
-                 or (? is not null and phone = ?)
-              )
-            order by id asc
-        """.trimIndent()
-
-        conn.prepareStatement(sql).use { stmt ->
-            stmt.setLong(1, merchantId)
-            stmt.setString(2, muid)
-            stmt.setString(3, muid)
-            stmt.setString(4, email)
-            stmt.setString(5, email)
-            stmt.setString(6, contact)
-            stmt.setString(7, contact)
             stmt.executeQuery().use { rs -> return rs.toPsgsUsers() }
         }
     }
