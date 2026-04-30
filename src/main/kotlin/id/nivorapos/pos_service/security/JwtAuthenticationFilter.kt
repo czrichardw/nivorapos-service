@@ -1,8 +1,9 @@
 package id.nivorapos.pos_service.security
 
-import id.nivorapos.pos_service.repository.UserDetailRepository
+import id.nivorapos.pos_service.service.PsgsCachedAuth
 import id.nivorapos.pos_service.service.PsgsCredentialService
 import id.nivorapos.pos_service.service.PsgsPosProvisioningService
+import id.nivorapos.pos_service.service.PsgsTokenAuthCacheService
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
@@ -21,8 +22,8 @@ class JwtAuthenticationFilter(
     private val psgsCredentialService: PsgsCredentialService,
     private val psgsPosProvisioningService: PsgsPosProvisioningService,
     private val userDetailsService: UserDetailsServiceImpl,
-    private val userDetailRepository: UserDetailRepository,
-    private val permissionResolver: PermissionResolver
+    private val permissionResolver: PermissionResolver,
+    private val psgsTokenAuthCacheService: PsgsTokenAuthCacheService
 ) : OncePerRequestFilter() {
 
     private val log = LoggerFactory.getLogger(JwtAuthenticationFilter::class.java)
@@ -32,7 +33,7 @@ class JwtAuthenticationFilter(
             "PRODUCT_VIEW", "CATEGORY_VIEW", "STOCK_VIEW",
             "TRANSACTION_VIEW", "TRANSACTION_CREATE", "TRANSACTION_UPDATE",
             "REPORT_VIEW", "PAYMENT_SETTING"
-        ).map { SimpleGrantedAuthority(it) }
+        )
     }
 
     override fun doFilterInternal(
@@ -99,15 +100,31 @@ class JwtAuthenticationFilter(
             return
         }
 
+        val tokenHash = psgsTokenAuthCacheService.tokenHash(token)
+        val cacheLookupStart = System.nanoTime()
+        val cachedAuth = psgsTokenAuthCacheService.findValid(tokenHash)
+        val cacheLookupMs = elapsedMs(cacheLookupStart)
+
+        if (cachedAuth != null) {
+            authenticatePsgs(cachedAuth, request)
+            val touchStart = System.nanoTime()
+            psgsTokenAuthCacheService.touchLastUsed(tokenHash)
+            log.info("[AUTH-CACHE] $uri — HIT username='${cachedAuth.username}' merchantId=${cachedAuth.merchantId} lookup=${cacheLookupMs}ms touch=${elapsedMs(touchStart)}ms")
+            return
+        }
+
+        log.info("[AUTH-CACHE] $uri — MISS lookup=${cacheLookupMs}ms tokenHash=${tokenHash.take(12)}...")
         log.info("[AUTH] $uri — querying midware_master.mobile_app_user_session for token: ${token.take(12)}...")
 
         try {
+            val mysqlLookupStart = System.nanoTime()
             val session = psgsCredentialService.findSessionByToken(token)
+            val mysqlLookupMs = elapsedMs(mysqlLookupStart)
             if (session == null) {
-                log.warn("[AUTH] $uri — token NOT FOUND in midware_master.mobile_app_user_session — authentication rejected")
+                log.warn("[AUTH] $uri — token NOT FOUND in midware_master.mobile_app_user_session mysqlLookup=${mysqlLookupMs}ms — authentication rejected")
                 return
             }
-            log.info("[AUTH] $uri — session found for username='${session.username}' hit_from='${session.hitFrom}' updated_at=${session.updateAt}")
+            log.info("[AUTH] $uri — session found for username='${session.username}' hit_from='${session.hitFrom}' updated_at=${session.updateAt} mysqlLookup=${mysqlLookupMs}ms")
 
             val credential = psgsCredentialService.credentialFromSession(session)
             if (credential == null) {
@@ -115,19 +132,47 @@ class JwtAuthenticationFilter(
                 return
             }
 
-            val merchantId = credential.merchant.id
-            log.info("[AUTH] $uri — credential resolved: username='${session.username}' merchantId=$merchantId merchantName='${credential.merchant.name}'")
+            val provisioningStart = System.nanoTime()
+            val provisioned = psgsPosProvisioningService.provision(credential)
+            val merchantId = provisioned.merchant.id
+            log.info("[AUTH] $uri — credential resolved and provisioned: username='${session.username}' psgsMerchantId=${credential.merchant.id} posMerchantId=$merchantId merchantName='${provisioned.merchant.name}' provisioning=${elapsedMs(provisioningStart)}ms")
+            val authorityCodes = permissionResolver.resolve(session.username, merchantId)
+                .map { it.authority }
+                .ifEmpty { PSGS_DEFAULT_AUTHORITIES }
 
-            val principal = User(session.username, "", PSGS_DEFAULT_AUTHORITIES)
-            val authToken = UsernamePasswordAuthenticationToken(principal, null, PSGS_DEFAULT_AUTHORITIES)
-            authToken.details = WebAuthenticationDetailsSource().buildDetails(request).let {
-                mapOf("merchantId" to merchantId, "webDetails" to it)
-            }
+            val cached = PsgsCachedAuth(
+                username = session.username,
+                merchantId = merchantId,
+                merchantName = provisioned.merchant.name ?: credential.merchant.name,
+                hitFrom = session.hitFrom,
+                sessionUpdateAt = session.updateAt,
+                authorities = authorityCodes,
+                expiresAt = psgsTokenAuthCacheService.expiresAt(token)
+            )
+            authenticatePsgs(cached, request)
 
-            SecurityContextHolder.getContext().authentication = authToken
+            val upsertStart = System.nanoTime()
+            psgsTokenAuthCacheService.upsert(
+                tokenHash = tokenHash,
+                auth = cached,
+                metadata = """{"source":"psgs_mysql_fallback"}"""
+            )
+            log.info("[AUTH-CACHE] $uri — UPSERT username='${session.username}' merchantId=$merchantId expiresAt=${cached.expiresAt} duration=${elapsedMs(upsertStart)}ms")
             log.info("[AUTH] $uri — PSGS authentication SUCCESS for username='${session.username}' merchantId=$merchantId")
         } catch (e: Exception) {
             log.error("[AUTH] $uri — PSGS session authentication threw an exception: ${e.javaClass.simpleName}: ${e.message}", e)
         }
     }
+
+    private fun authenticatePsgs(auth: PsgsCachedAuth, request: HttpServletRequest) {
+        val authorities = auth.authorities.map { SimpleGrantedAuthority(it) }
+        val principal = User(auth.username, "", authorities)
+        val authToken = UsernamePasswordAuthenticationToken(principal, null, authorities)
+        authToken.details = WebAuthenticationDetailsSource().buildDetails(request).let {
+            mapOf("merchantId" to auth.merchantId, "webDetails" to it)
+        }
+        SecurityContextHolder.getContext().authentication = authToken
+    }
+
+    private fun elapsedMs(startNano: Long): Long = (System.nanoTime() - startNano) / 1_000_000
 }
