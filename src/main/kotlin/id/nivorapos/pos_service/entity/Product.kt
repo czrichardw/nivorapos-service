@@ -53,13 +53,13 @@ class Product(
     @Column(name = "tax_id")
     var taxId: Long? = null,
 
-    @Column(name = "product_type", columnDefinition = "varchar(20) not null default 'SIMPLE'")
+    @Column(name = "product_type", length = 20, nullable = false)
     var productType: String = "SIMPLE",
 
-    @Column(name = "is_active", columnDefinition = "boolean not null default true")
+    @Column(name = "is_active", nullable = false)
     var isActive: Boolean = true,
 
-    @Column(name = "is_stock", columnDefinition = "boolean not null default true")
+    @Column(name = "is_stock", nullable = false)
     var isStock: Boolean = true,
 
     @Column(name = "deleted_by")

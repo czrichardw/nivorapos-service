@@ -6,7 +6,9 @@ import org.springframework.stereotype.Service
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.ResultSet
+import java.security.MessageDigest
 import java.time.Instant
+import java.util.Base64
 
 @Service
 class PsgsCredentialService(
@@ -33,13 +35,15 @@ class PsgsCredentialService(
         Class.forName(driverClassName)
 
         connection().use { conn ->
-            val candidates = findUsersByLogin(conn, login)
+            val candidates = findMobileAppUsersByLogin(conn, login).ifEmpty {
+                findUsersByLogin(conn, login)
+            }
 
             val matchedUser = candidates.firstOrNull { user ->
                     user.enabled != false &&
                     user.deletedAt == null &&
                     user.merchantId != null &&
-                    passwordMatches(rawPassword, user.passwordHash)
+                    passwordMatches(rawPassword, user)
             } ?: return null
 
             val merchant = findMerchant(conn, matchedUser.merchantId!!)
@@ -77,6 +81,21 @@ class PsgsCredentialService(
     }
 
     private fun connection(): Connection = DriverManager.getConnection(url, username, password)
+
+    private fun findMobileAppUsersByLogin(conn: Connection, login: String): List<PsgsUser> {
+        val sql = """
+            select id, username, merchant_id, passwd_hash, first_name, last_name, deleted_at
+            from $masterSchema.mobile_app_users
+            where deleted_at is null
+              and username = ?
+            order by id asc
+        """.trimIndent()
+
+        conn.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, login)
+            stmt.executeQuery().use { rs -> return rs.toPsgsMobileAppUsers() }
+        }
+    }
 
     private fun findUsersByLogin(conn: Connection, login: String): List<PsgsUser> {
         val sql = """
@@ -154,6 +173,35 @@ class PsgsCredentialService(
             .distinct()
     }
 
+    private fun ResultSet.toPsgsMobileAppUsers(): List<PsgsUser> {
+        val users = mutableListOf<PsgsUser>()
+        while (next()) {
+            val firstName = getString("first_name")
+            val lastName = getString("last_name")
+            val fullName = listOfNotNull(firstName, lastName)
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .joinToString(" ")
+                .ifBlank { getString("username") }
+
+            users.add(
+                PsgsUser(
+                    id = getLong("id"),
+                    username = getString("username"),
+                    fullName = fullName,
+                    email = null,
+                    passwordHash = getString("passwd_hash"),
+                    passwordType = PsgsPasswordType.SHA256_BASE64,
+                    enabled = true,
+                    merchantId = getNullableLong("merchant_id"),
+                    phone = null,
+                    deletedAt = getString("deleted_at")
+                )
+            )
+        }
+        return users
+    }
+
     private fun ResultSet.toPsgsUsers(): List<PsgsUser> {
         val users = mutableListOf<PsgsUser>()
         while (next()) {
@@ -164,6 +212,7 @@ class PsgsCredentialService(
                     fullName = getString("name"),
                     email = getString("email"),
                     passwordHash = getString("password"),
+                    passwordType = PsgsPasswordType.BCRYPT,
                     enabled = getNullableBoolean("enabled"),
                     merchantId = getNullableLong("merchant_id"),
                     phone = getString("phone"),
@@ -203,12 +252,20 @@ class PsgsCredentialService(
         return if (hash.startsWith("$2y$")) "$2a$${hash.removePrefix("$2y$")}" else hash
     }
 
-    private fun passwordMatches(rawPassword: String, encodedPassword: String): Boolean {
-        return try {
-            passwordEncoder.matches(rawPassword, normalizeBcrypt(encodedPassword))
-        } catch (_: RuntimeException) {
-            false
+    private fun passwordMatches(rawPassword: String, user: PsgsUser): Boolean {
+        return when (user.passwordType) {
+            PsgsPasswordType.SHA256_BASE64 -> digestSha256Base64(rawPassword) == user.passwordHash
+            PsgsPasswordType.BCRYPT -> try {
+                passwordEncoder.matches(rawPassword, normalizeBcrypt(user.passwordHash))
+            } catch (_: RuntimeException) {
+                false
+            }
         }
+    }
+
+    private fun digestSha256Base64(rawPassword: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(rawPassword.toByteArray(Charsets.UTF_8))
+        return Base64.getEncoder().encodeToString(digest)
     }
 
     private fun validateSchemaName(schemaName: String) {
@@ -226,13 +283,19 @@ data class PsgsUser(
     val id: Long,
     val username: String?,
     val fullName: String,
-    val email: String,
+    val email: String?,
     val passwordHash: String,
+    val passwordType: PsgsPasswordType,
     val enabled: Boolean?,
     val merchantId: Long?,
     val phone: String?,
     val deletedAt: String?
 )
+
+enum class PsgsPasswordType {
+    SHA256_BASE64,
+    BCRYPT
+}
 
 data class PsgsMerchant(
     val id: Long,
