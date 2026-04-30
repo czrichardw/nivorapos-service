@@ -20,7 +20,7 @@ class ProductController(
     @PreAuthorize("hasAuthority('PRODUCT_VIEW')")
     fun list(
         @RequestParam(defaultValue = "0") page: Int,
-        @RequestParam size: Int,
+        @RequestParam(defaultValue = "10") size: Int,
         @RequestParam(required = false) categoryId: Long?,
         @RequestParam(required = false) keyword: String?,
         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) startDate: LocalDate?,
