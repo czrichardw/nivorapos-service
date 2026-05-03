@@ -51,7 +51,7 @@ class PsgsPosProvisioningService(
         ensureMerchantDefaults(merchant, now)
 
         val user = upsertUser(credential.user, credential.session.username, now)
-        upsertUserDetail(user.username, merchant, credential.merchant.id, now)
+        upsertUserDetail(user.username, merchant, now)
         assignCashierRole(user, merchant.id, now)
 
         return ProvisionedPosUser(user, merchant)
@@ -61,7 +61,6 @@ class PsgsPosProvisioningService(
         val merchant = merchantRepository.findById(psgsMerchant.id).orElseGet {
             Merchant(
                 id = psgsMerchant.id,
-                merchantPosId = psgsMerchant.id,
                 createdBy = systemUser,
                 createdDate = now
             )
@@ -75,7 +74,6 @@ class PsgsPosProvisioningService(
         merchant.address = psgsMerchant.address
         merchant.phone = psgsMerchant.phone
         merchant.email = psgsMerchant.email
-        merchant.merchantPosId = psgsMerchant.id
         merchant.isActive = psgsMerchant.deletedAt == null && psgsMerchant.isPosEnabled != false
         merchant.modifiedBy = systemUser
         merchant.modifiedDate = now
@@ -108,7 +106,7 @@ class PsgsPosProvisioningService(
         return userRepository.save(user)
     }
 
-    private fun upsertUserDetail(username: String, merchant: Merchant, psgsMerchantId: Long, now: LocalDateTime) {
+    private fun upsertUserDetail(username: String, merchant: Merchant, now: LocalDateTime) {
         val detail = userDetailRepository.findByUsername(username).orElseGet {
             UserDetail(
                 username = username,
@@ -117,7 +115,6 @@ class PsgsPosProvisioningService(
             )
         }
         detail.merchantId = merchant.id
-        detail.merchantPosId = psgsMerchantId
         detail.modifiedBy = systemUser
         detail.modifiedDate = now
         userDetailRepository.save(detail)

@@ -13,9 +13,6 @@ class UserDetail(
     @Column(name = "merchant_id")
     var merchantId: Long? = null,
 
-    @Column(name = "merchant_pos_id")
-    var merchantPosId: Long? = null,
-
     @Column(name = "merchant_vapn_id")
     var merchantVapnId: Long? = null,
 

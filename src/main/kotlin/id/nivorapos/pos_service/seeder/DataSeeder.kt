@@ -152,7 +152,6 @@ class DataSeeder(
             name = "Kafe Nivora",
             code = "MRC-001",
             merchantUniqueCode = "NIVORA-001",
-            merchantPosId = seedMerchantId,
             isActive = true,
             description = "Kafe modern berbasis teknologi Nivora POS",
             address = "Jl. Sudirman No. 88, Jakarta Selatan",
@@ -382,7 +381,6 @@ class DataSeeder(
                 userDetailRepository.save(
                     UserDetail(
                         merchantId = merchant.id,
-                        merchantPosId = merchant.id,
                         username = user.username,
                         createdBy = seederUser,
                         createdDate = now

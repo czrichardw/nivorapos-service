@@ -45,9 +45,6 @@ class Merchant(
     @Column(name = "merchant_vapn_id")
     var merchantVapnId: Long? = null,
 
-    @Column(name = "merchant_pos_id")
-    var merchantPosId: Long? = null,
-
     @Column(name = "created_by")
     var createdBy: String? = null,
 
