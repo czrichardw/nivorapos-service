@@ -1,6 +1,7 @@
 package id.nivorapos.pos_service.service
 
 import id.nivorapos.pos_service.entity.Merchant
+import id.nivorapos.pos_service.entity.MerchantPaymentMethod
 import id.nivorapos.pos_service.entity.Outlet
 import id.nivorapos.pos_service.entity.PaymentSetting
 import id.nivorapos.pos_service.entity.Permission
@@ -10,8 +11,10 @@ import id.nivorapos.pos_service.entity.Tax
 import id.nivorapos.pos_service.entity.User
 import id.nivorapos.pos_service.entity.UserDetail
 import id.nivorapos.pos_service.entity.UserRole
+import id.nivorapos.pos_service.repository.MerchantPaymentMethodRepository
 import id.nivorapos.pos_service.repository.MerchantRepository
 import id.nivorapos.pos_service.repository.OutletRepository
+import id.nivorapos.pos_service.repository.PaymentMethodRepository
 import id.nivorapos.pos_service.repository.PaymentSettingRepository
 import id.nivorapos.pos_service.repository.PermissionRepository
 import id.nivorapos.pos_service.repository.RolePermissionRepository
@@ -38,6 +41,8 @@ class PsgsPosProvisioningService(
     private val userRoleRepository: UserRoleRepository,
     private val outletRepository: OutletRepository,
     private val taxRepository: TaxRepository,
+    private val paymentMethodRepository: PaymentMethodRepository,
+    private val merchantPaymentMethodRepository: MerchantPaymentMethodRepository,
     private val paymentSettingRepository: PaymentSettingRepository,
     private val passwordEncoder: PasswordEncoder
 ) {
@@ -83,6 +88,7 @@ class PsgsPosProvisioningService(
     private fun ensureMerchantDefaults(merchant: Merchant, now: LocalDateTime) {
         ensureDefaultOutlet(merchant, now)
         ensureDefaultTax(merchant, now)
+        ensureMerchantPaymentMethods(merchant, now)
         ensureDefaultPaymentSetting(merchant, now)
     }
 
@@ -227,6 +233,31 @@ class PsgsPosProvisioningService(
                 createdDate = now
             )
         )
+    }
+
+    private fun ensureMerchantPaymentMethods(merchant: Merchant, now: LocalDateTime) {
+        val activePaymentMethods = paymentMethodRepository.findByIsActiveTrue()
+        if (activePaymentMethods.isEmpty()) return
+
+        val existingLinks = merchantPaymentMethodRepository.findByMerchantId(merchant.id)
+        val existingMethodIds = existingLinks.map { it.paymentMethodId }.toSet()
+        var displayOrder = existingLinks.maxOfOrNull { it.displayOrder } ?: 0
+
+        activePaymentMethods
+            .filter { it.id !in existingMethodIds }
+            .forEach { paymentMethod ->
+                displayOrder += 1
+                merchantPaymentMethodRepository.save(
+                    MerchantPaymentMethod(
+                        merchantId = merchant.id,
+                        paymentMethodId = paymentMethod.id,
+                        isEnabled = true,
+                        displayOrder = displayOrder,
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                )
+            }
     }
 
     private fun ensureDefaultPaymentSetting(merchant: Merchant, now: LocalDateTime) {
