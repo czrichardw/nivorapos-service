@@ -1,20 +1,90 @@
 services:
-  pos-service:
-    image: nahsbyte/pos-service:latest
-    container_name: pos-service
+  pos-db:
+    image: postgres:16-alpine
+    container_name: pos-db
     restart: always
     ports:
-      - "8083:8080"
+      - "${POS_DB_PORT:-5432}:5432"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://192.168.1.100:5432/nivora-pos-db
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: postgres
-      SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      JWT_SECRET: NivoraPOSSecretKey2024VeryLongSecretForHS256Algorithm
-      JWT_EXPIRATION: 86400000
+      POSTGRES_DB: ${POS_DB_NAME:-nivora-pos-db}
+      POSTGRES_USER: ${POS_DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POS_DB_PASSWORD:-postgres}
+    volumes:
+      - pos-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POS_DB_USERNAME:-postgres} -d ${POS_DB_NAME:-nivora-pos-db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: pos-minio
+    restart: always
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: pos-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}; do sleep 2; done;
+      mc mb --ignore-existing local/${MINIO_BUCKET:-nivora-pos-images};
+      mc anonymous set download local/${MINIO_BUCKET:-nivora-pos-images};
+      "
+
+  pos-service:
+    build: .
+    image: nivorapos/pos-service:latest
+    container_name: pos-service
+    restart: always
+    depends_on:
+      pos-db:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "${POS_SERVICE_PORT:-8083}:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://pos-db:5432/${POS_DB_NAME:-nivora-pos-db}
+      DB_USERNAME: ${POS_DB_USERNAME:-postgres}
+      DB_PASSWORD: ${POS_DB_PASSWORD:-postgres}
+      DDL_AUTO: ${DDL_AUTO:-update}
+      JWT_SECRET: ${JWT_SECRET:-NivoraPOSSecretKey2024VeryLongSecretForHS256Algorithm}
+      PREAUTHORIZE: ${PREAUTHORIZE:-false}
+      PSGS_INTEGRATION_ENABLED: ${PSGS_INTEGRATION_ENABLED:-false}
+      PSGS_DB_URL: ${PSGS_DB_URL:-}
+      PSGS_DB_USERNAME: ${PSGS_DB_USERNAME:-}
+      PSGS_DB_PASSWORD: ${PSGS_DB_PASSWORD:-}
+      PSGS_MASTER_SCHEMA: ${PSGS_MASTER_SCHEMA:-midware_master}
+      APP_STORAGE_PROVIDER: minio
+      APP_STORAGE_MINIO_ENDPOINT: http://minio:9000
+      APP_STORAGE_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      APP_STORAGE_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      APP_STORAGE_MINIO_BUCKET: ${MINIO_BUCKET:-nivora-pos-images}
+      APP_STORAGE_MINIO_OBJECT_PREFIX: ${MINIO_OBJECT_PREFIX:-images/product}
+      APP_STORAGE_MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL:-http://localhost:9000/nivora-pos-images}
+      UPLOAD_MAX_FILE_SIZE: ${UPLOAD_MAX_FILE_SIZE:-5MB}
+      UPLOAD_MAX_REQUEST_SIZE: ${UPLOAD_MAX_REQUEST_SIZE:-5MB}
+      UPLOAD_MAX_SIZE_BYTES: ${UPLOAD_MAX_SIZE_BYTES:-5242880}
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
+
+volumes:
+  pos-db-data:
+  minio-data:

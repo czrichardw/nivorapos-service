@@ -29,7 +29,8 @@ class ProductService(
     private val productVariantRepository: ProductVariantRepository,
     private val productModifierRepository: ProductModifierRepository,
     private val transactionItemRepository: TransactionItemRepository,
-    private val transactionItemModifierRepository: TransactionItemModifierRepository
+    private val transactionItemModifierRepository: TransactionItemModifierRepository,
+    private val psgsCredentialService: PsgsCredentialService
 ) {
 
     fun list(
@@ -130,6 +131,7 @@ class ProductService(
         require(request.qty >= 0) { "qty must be greater than or equal to 0" }
 
         val paymentSetting = paymentSettingRepository.findByMerchantId(merchantId).orElse(null)
+        val merchantUniqueCode = resolveMerchantUniqueCode(merchantId)
         val calculatedPrice = calculateFinalPrice(
             basePrice = request.basePrice ?: request.price,
             taxId = request.taxId,
@@ -140,6 +142,7 @@ class ProductService(
 
         val product = Product(
             merchantId = merchantId,
+            merchantUniqueCode = merchantUniqueCode,
             name = request.name,
             price = calculatedPrice,
             productType = productType,
@@ -207,6 +210,7 @@ class ProductService(
         val product = productRepository.findByIdAndDeletedDateIsNull(request.id)
             .orElseThrow { RuntimeException("Product not found") }
         val paymentSetting = paymentSettingRepository.findByMerchantId(product.merchantId).orElse(null)
+        val merchantUniqueCode = resolveMerchantUniqueCode(product.merchantId)
         val resolvedBasePrice = request.basePrice ?: request.price
         val calculatedPrice = calculateFinalPrice(
             basePrice = resolvedBasePrice,
@@ -217,6 +221,7 @@ class ProductService(
         )
 
         product.name = request.name
+        product.merchantUniqueCode = merchantUniqueCode
         product.price = calculatedPrice
         product.sku = request.sku
         product.upc = request.upc
@@ -536,6 +541,27 @@ class ProductService(
             .orElseThrow { RuntimeException("Product not found") }
         require(product.merchantId == merchantId) { "Product tidak ditemukan" }
         return product
+    }
+
+    private fun resolveMerchantUniqueCode(merchantId: Long): String? {
+        val psgsMerchant = runCatching { psgsCredentialService.findMerchant(merchantId) }.getOrNull()
+        if (psgsMerchant != null) {
+            val resolvedUniqueCode = psgsMerchant.merchantUniqueCode ?: "PSGS-$merchantId"
+            val merchant = merchantRepository.findById(merchantId).orElse(null)
+            if (merchant != null) {
+                merchant.merchantName = psgsMerchant.dba?.takeIf { it.isNotBlank() } ?: psgsMerchant.name
+                merchant.name = merchant.merchantName
+                merchant.code = resolvedUniqueCode
+                merchant.merchantUniqueCode = resolvedUniqueCode
+                merchant.address = psgsMerchant.address
+                merchant.phone = psgsMerchant.phone
+                merchant.email = psgsMerchant.email
+                merchantRepository.save(merchant)
+            }
+            return resolvedUniqueCode
+        }
+
+        return merchantRepository.findById(merchantId).orElse(null)?.merchantUniqueCode
     }
 
     private fun buildProductResponseBatched(

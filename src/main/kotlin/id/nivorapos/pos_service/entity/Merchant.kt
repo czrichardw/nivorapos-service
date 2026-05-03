@@ -7,7 +7,6 @@ import java.time.LocalDateTime
 @Table(name = "merchant")
 class Merchant(
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
 
     @Column(name = "area_id")

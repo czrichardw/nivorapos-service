@@ -121,6 +121,14 @@ class PsgsCredentialService(
         }
     }
 
+    fun findMerchant(merchantId: Long): PsgsMerchant? {
+        if (!isEnabled()) return null
+        validateSchemaName(masterSchema)
+        connection().use { conn ->
+            return findMerchantById(conn, merchantId)
+        }
+    }
+
     private fun connection(): Connection = psgsDataSource?.connection
         ?: throw IllegalStateException("PSGS datasource not initialized")
 
@@ -156,7 +164,9 @@ class PsgsCredentialService(
         }
     }
 
-    private fun findMerchant(conn: Connection, merchantId: Long): PsgsMerchant? {
+    private fun findMerchant(conn: Connection, merchantId: Long): PsgsMerchant? = findMerchantById(conn, merchantId)
+
+    private fun findMerchantById(conn: Connection, merchantId: Long): PsgsMerchant? {
         val sql = """
             select id, name, dba, merchant_unique_code, address1, address2, phone_office, pic_mobile_phone,
                    pic_email, is_pos_enable, deleted_at

@@ -1,9 +1,7 @@
 package id.nivorapos.pos_service.service
 
 import id.nivorapos.pos_service.entity.Merchant
-import id.nivorapos.pos_service.entity.MerchantPaymentMethod
 import id.nivorapos.pos_service.entity.Outlet
-import id.nivorapos.pos_service.entity.PaymentMethod
 import id.nivorapos.pos_service.entity.PaymentSetting
 import id.nivorapos.pos_service.entity.Permission
 import id.nivorapos.pos_service.entity.Role
@@ -12,10 +10,8 @@ import id.nivorapos.pos_service.entity.Tax
 import id.nivorapos.pos_service.entity.User
 import id.nivorapos.pos_service.entity.UserDetail
 import id.nivorapos.pos_service.entity.UserRole
-import id.nivorapos.pos_service.repository.MerchantPaymentMethodRepository
 import id.nivorapos.pos_service.repository.MerchantRepository
 import id.nivorapos.pos_service.repository.OutletRepository
-import id.nivorapos.pos_service.repository.PaymentMethodRepository
 import id.nivorapos.pos_service.repository.PaymentSettingRepository
 import id.nivorapos.pos_service.repository.PermissionRepository
 import id.nivorapos.pos_service.repository.RolePermissionRepository
@@ -42,8 +38,6 @@ class PsgsPosProvisioningService(
     private val userRoleRepository: UserRoleRepository,
     private val outletRepository: OutletRepository,
     private val taxRepository: TaxRepository,
-    private val paymentMethodRepository: PaymentMethodRepository,
-    private val merchantPaymentMethodRepository: MerchantPaymentMethodRepository,
     private val paymentSettingRepository: PaymentSettingRepository,
     private val passwordEncoder: PasswordEncoder
 ) {
@@ -64,8 +58,9 @@ class PsgsPosProvisioningService(
     }
 
     private fun upsertMerchant(psgsMerchant: PsgsMerchant, now: LocalDateTime): Merchant {
-        val merchant = merchantRepository.findByMerchantPosId(psgsMerchant.id).orElseGet {
+        val merchant = merchantRepository.findById(psgsMerchant.id).orElseGet {
             Merchant(
+                id = psgsMerchant.id,
                 merchantPosId = psgsMerchant.id,
                 createdBy = systemUser,
                 createdDate = now
@@ -80,6 +75,7 @@ class PsgsPosProvisioningService(
         merchant.address = psgsMerchant.address
         merchant.phone = psgsMerchant.phone
         merchant.email = psgsMerchant.email
+        merchant.merchantPosId = psgsMerchant.id
         merchant.isActive = psgsMerchant.deletedAt == null && psgsMerchant.isPosEnabled != false
         merchant.modifiedBy = systemUser
         merchant.modifiedDate = now
@@ -89,7 +85,6 @@ class PsgsPosProvisioningService(
     private fun ensureMerchantDefaults(merchant: Merchant, now: LocalDateTime) {
         ensureDefaultOutlet(merchant, now)
         ensureDefaultTax(merchant, now)
-        ensureDefaultPaymentMethods(merchant, now)
         ensureDefaultPaymentSetting(merchant, now)
     }
 
@@ -237,55 +232,6 @@ class PsgsPosProvisioningService(
         )
     }
 
-    private fun ensureDefaultPaymentMethods(merchant: Merchant, now: LocalDateTime) {
-        val methods = ensurePaymentMethods(now)
-        val existingMethodIds = merchantPaymentMethodRepository.findAll()
-            .filter { it.merchantId == merchant.id }
-            .map { it.paymentMethodId }
-            .toSet()
-
-        methods.forEachIndexed { index, paymentMethod ->
-            if (paymentMethod.id !in existingMethodIds) {
-                merchantPaymentMethodRepository.save(
-                    MerchantPaymentMethod(
-                        merchantId = merchant.id,
-                        paymentMethodId = paymentMethod.id,
-                        isEnabled = true,
-                        displayOrder = index + 1,
-                        createdAt = now,
-                        updatedAt = now
-                    )
-                )
-            }
-        }
-    }
-
-    private fun ensurePaymentMethods(now: LocalDateTime): List<PaymentMethod> {
-        val seeds = listOf(
-            PaymentMethodSeed("CASH", "Cash", "INTERNAL", "CASH", ""),
-            PaymentMethodSeed("QRIS", "QRIS", "EXTERNAL", "QRIS", "QRIS_PROVIDER"),
-            PaymentMethodSeed("DEBIT", "Debit Card", "EXTERNAL", "CARD", "EDC"),
-            PaymentMethodSeed("CREDIT", "Credit Card", "EXTERNAL", "CARD", "EDC"),
-            PaymentMethodSeed("TRANSFER", "Bank Transfer", "EXTERNAL", "TRANSFER", "BANK")
-        )
-
-        return seeds.map { seed ->
-            paymentMethodRepository.findAll().firstOrNull { it.code == seed.code }
-                ?: paymentMethodRepository.save(
-                    PaymentMethod(
-                        code = seed.code,
-                        name = seed.name,
-                        category = seed.category,
-                        paymentType = seed.paymentType,
-                        provider = seed.provider,
-                        isActive = true,
-                        createdAt = now,
-                        updatedAt = now
-                    )
-                )
-        }
-    }
-
     private fun ensureDefaultPaymentSetting(merchant: Merchant, now: LocalDateTime) {
         if (paymentSettingRepository.findByMerchantId(merchant.id).isPresent) return
         paymentSettingRepository.save(
@@ -319,12 +265,4 @@ private data class PermissionSeed(
     val name: String,
     val menuKey: String,
     val menuLabel: String
-)
-
-private data class PaymentMethodSeed(
-    val code: String,
-    val name: String,
-    val category: String,
-    val paymentType: String,
-    val provider: String
 )

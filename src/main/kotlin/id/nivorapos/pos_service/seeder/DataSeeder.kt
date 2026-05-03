@@ -43,6 +43,7 @@ class DataSeeder(
     private val log = LoggerFactory.getLogger(DataSeeder::class.java)
     private val now = LocalDateTime.now()
     private val seederUser = "SEEDER"
+    private val seedMerchantId = 1L
 
     @Transactional
     override fun run(args: ApplicationArguments) {
@@ -145,11 +146,13 @@ class DataSeeder(
             return existingList.first()
         }
         val entity = Merchant(
+            id = seedMerchantId,
             areaId = area.id,
             merchantName = "Kafe Nivora",
             name = "Kafe Nivora",
             code = "MRC-001",
             merchantUniqueCode = "NIVORA-001",
+            merchantPosId = seedMerchantId,
             isActive = true,
             description = "Kafe modern berbasis teknologi Nivora POS",
             address = "Jl. Sudirman No. 88, Jakarta Selatan",
@@ -421,16 +424,20 @@ class DataSeeder(
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Payment Methods
+    // ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // Payment Setting
     // ─────────────────────────────────────────────────────────────
     private fun seedPaymentMethods(): List<PaymentMethod> {
         data class PMData(val code: String, val name: String, val category: String, val paymentType: String, val provider: String)
 
         val pmList = listOf(
-            PMData("CASH",   "Cash",        "INTERNAL", "CASH",   ""),
-            PMData("QRIS",   "QRIS",        "EXTERNAL", "QRIS",   "QRIS_PROVIDER"),
-            PMData("DEBIT",  "Debit Card",  "EXTERNAL", "CARD",   "EDC"),
-            PMData("CREDIT", "Credit Card", "EXTERNAL", "CARD",   "EDC"),
+            PMData("CASH", "Cash", "INTERNAL", "CASH", ""),
+            PMData("QRIS", "QRIS", "EXTERNAL", "QRIS", "QRIS_PROVIDER"),
+            PMData("DEBIT", "Debit Card", "EXTERNAL", "CARD", "EDC"),
+            PMData("CREDIT", "Credit Card", "EXTERNAL", "CARD", "EDC"),
             PMData("TRANSFER", "Bank Transfer", "EXTERNAL", "TRANSFER", "BANK")
         )
 
@@ -456,9 +463,6 @@ class DataSeeder(
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Merchant Payment Methods
-    // ─────────────────────────────────────────────────────────────
     private fun seedMerchantPaymentMethods(merchant: Merchant) {
         val allPM = paymentMethodRepository.findAll()
         val existingMPM = merchantPaymentMethodRepository.findAll()
@@ -485,9 +489,6 @@ class DataSeeder(
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Payment Setting
-    // ─────────────────────────────────────────────────────────────
     private fun seedPaymentSetting(merchant: Merchant) {
         if (paymentSettingRepository.findByMerchantId(merchant.id).isPresent) {
             log.info("[SKIP] PaymentSetting already exists for merchant ${merchant.id}")

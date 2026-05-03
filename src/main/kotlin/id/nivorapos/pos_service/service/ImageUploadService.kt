@@ -1,6 +1,10 @@
 package id.nivorapos.pos_service.service
 
 import id.nivorapos.pos_service.dto.response.ImageUploadResponse
+import io.minio.BucketExistsArgs
+import io.minio.MakeBucketArgs
+import io.minio.MinioClient
+import io.minio.PutObjectArgs
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
@@ -8,6 +12,8 @@ import org.springframework.web.multipart.MultipartFile
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -22,23 +28,62 @@ class ImageUploadService(
     @Value("\${app.upload.public-base-url:}")
     private val configuredBaseUrl: String,
     @Value("\${app.upload.max-size-bytes:5242880}")
-    private val maxSizeBytes: Long
+    private val maxSizeBytes: Long,
+    @Value("\${app.storage.provider:local}")
+    private val storageProvider: String,
+    @Value("\${app.storage.minio.endpoint:}")
+    private val minioEndpoint: String,
+    @Value("\${app.storage.minio.access-key:}")
+    private val minioAccessKey: String,
+    @Value("\${app.storage.minio.secret-key:}")
+    private val minioSecretKey: String,
+    @Value("\${app.storage.minio.bucket:nivora-pos-images}")
+    private val minioBucket: String,
+    @Value("\${app.storage.minio.object-prefix:images/product}")
+    private val minioObjectPrefix: String,
+    @Value("\${app.storage.minio.public-base-url:}")
+    private val minioPublicBaseUrl: String
 ) {
 
     private val allowedExtensions = setOf("jpg", "jpeg", "png", "webp")
     private val allowedContentTypes = setOf("image/jpeg", "image/png", "image/webp")
+    private val minioClient: MinioClient? by lazy {
+        if (!isMinioStorage()) null
+        else MinioClient.builder()
+            .endpoint(minioEndpoint)
+            .credentials(minioAccessKey, minioSecretKey)
+            .build()
+    }
 
     fun upload(file: MultipartFile, servletRequest: HttpServletRequest): ImageUploadResponse {
         validate(file)
 
         val ext = extensionOf(file.originalFilename, file.contentType)
         val datedDirectory = LocalDate.now().toString()
-        val targetDirectory = Path.of(uploadDir, datedDirectory).toAbsolutePath().normalize()
-        Files.createDirectories(targetDirectory)
-
         val baseName = "product_${UUID.randomUUID().toString().replace("-", "")}"
         val filename = "$baseName.$ext"
         val thumbFilename = "${baseName}_thumb.$ext"
+
+        if (isMinioStorage()) {
+            val objectPrefix = minioObjectPrefix.trim('/').takeIf { it.isNotBlank() } ?: "images/product"
+            val objectName = "$objectPrefix/$datedDirectory/$filename"
+            val thumbObjectName = "$objectPrefix/$datedDirectory/$thumbFilename"
+            val originalBytes = file.bytes
+            val thumbBytes = createThumbnailBytes(originalBytes, ext)
+
+            ensureMinioBucket()
+            uploadMinioObject(objectName, originalBytes, file.contentType ?: contentTypeFor(ext))
+            uploadMinioObject(thumbObjectName, thumbBytes, contentTypeFor(ext))
+
+            return ImageUploadResponse(
+                urlFull = minioPublicUrl(objectName),
+                urlThumb = minioPublicUrl(thumbObjectName)
+            )
+        }
+
+        val targetDirectory = Path.of(uploadDir, datedDirectory).toAbsolutePath().normalize()
+        Files.createDirectories(targetDirectory)
+
         val target = targetDirectory.resolve(filename).normalize()
         val thumbTarget = targetDirectory.resolve(thumbFilename).normalize()
 
@@ -46,9 +91,7 @@ class ImageUploadService(
             "Invalid upload target"
         }
 
-        file.inputStream.use { input ->
-            Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
-        }
+        file.inputStream.use { input -> Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING) }
         createThumbnail(target, thumbTarget, ext)
 
         val baseUrl = publicBaseUrl(servletRequest)
@@ -111,6 +154,76 @@ class ImageUploadService(
         val writerFormat = if (ext == "jpg") "jpeg" else ext
         if (!ImageIO.write(thumb, writerFormat, target.toFile())) {
             Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
+    private fun createThumbnailBytes(source: ByteArray, ext: String): ByteArray {
+        val original = ImageIO.read(ByteArrayInputStream(source)) ?: return source
+        val thumb = resize(original, ext)
+        val output = ByteArrayOutputStream()
+        val writerFormat = if (ext == "jpg") "jpeg" else ext
+        return if (ImageIO.write(thumb, writerFormat, output)) output.toByteArray() else source
+    }
+
+    private fun resize(original: BufferedImage, ext: String): BufferedImage {
+        val maxDimension = 320.0
+        val scale = minOf(maxDimension / original.width, maxDimension / original.height, 1.0)
+        val thumbWidth = (original.width * scale).toInt().coerceAtLeast(1)
+        val thumbHeight = (original.height * scale).toInt().coerceAtLeast(1)
+
+        val type = if (ext == "png") BufferedImage.TYPE_INT_ARGB else BufferedImage.TYPE_INT_RGB
+        val thumb = BufferedImage(thumbWidth, thumbHeight, type)
+        val graphics = thumb.createGraphics()
+        try {
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+            graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+            graphics.drawImage(original, 0, 0, thumbWidth, thumbHeight, null)
+        } finally {
+            graphics.dispose()
+        }
+        return thumb
+    }
+
+    private fun isMinioStorage(): Boolean = storageProvider.equals("minio", ignoreCase = true)
+
+    private fun ensureMinioBucket() {
+        require(minioEndpoint.isNotBlank()) { "MinIO endpoint is required" }
+        require(minioAccessKey.isNotBlank()) { "MinIO access key is required" }
+        require(minioSecretKey.isNotBlank()) { "MinIO secret key is required" }
+        val client = minioClient ?: throw IllegalStateException("MinIO client is not initialized")
+        val exists = client.bucketExists(BucketExistsArgs.builder().bucket(minioBucket).build())
+        if (!exists) {
+            client.makeBucket(MakeBucketArgs.builder().bucket(minioBucket).build())
+        }
+    }
+
+    private fun uploadMinioObject(objectName: String, bytes: ByteArray, contentType: String) {
+        val client = minioClient ?: throw IllegalStateException("MinIO client is not initialized")
+        ByteArrayInputStream(bytes).use { input ->
+            client.putObject(
+                PutObjectArgs.builder()
+                    .bucket(minioBucket)
+                    .`object`(objectName)
+                    .stream(input, bytes.size.toLong(), -1)
+                    .contentType(contentType)
+                    .build()
+            )
+        }
+    }
+
+    private fun minioPublicUrl(objectName: String): String {
+        val configured = minioPublicBaseUrl.trim().trimEnd('/')
+        if (configured.isNotBlank()) return "$configured/$objectName"
+
+        return "${minioEndpoint.trimEnd('/')}/${minioBucket.trim('/')}/$objectName"
+    }
+
+    private fun contentTypeFor(ext: String): String {
+        return when (ext) {
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "webp" -> "image/webp"
+            else -> "application/octet-stream"
         }
     }
 
