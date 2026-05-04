@@ -22,8 +22,8 @@ class DiscountService(
     private val discountUsageRepository: DiscountUsageRepository,
     private val productRepository: ProductRepository,
     private val categoryRepository: CategoryRepository,
-    private val outletRepository: OutletRepository,
-    private val productCategoryRepository: ProductCategoryRepository
+    private val productCategoryRepository: ProductCategoryRepository,
+    private val psgsCredentialService: PsgsCredentialService
 ) {
 
     fun list(): ApiResponse<List<DiscountResponse>> {
@@ -284,6 +284,7 @@ class DiscountService(
         }
         if (request.visibility.uppercase() == "SPECIFIC_OUTLET") {
             require(request.outletIds.isNotEmpty()) { "outletIds wajib diisi untuk visibility=SPECIFIC_OUTLET" }
+            validatePsgsOutletIds(request.outletIds, merchantId)
         }
         request.endDate?.let { end ->
             request.startDate?.let { start ->
@@ -319,6 +320,14 @@ class DiscountService(
                 discountOutletRepository.save(DiscountOutlet(discountId = discountId, outletId = it))
             }
         }
+    }
+
+    private fun validatePsgsOutletIds(outletIds: List<Long>, merchantId: Long) {
+        val psgsOutletIds = psgsCredentialService.findOutletsByMerchantId(merchantId)
+            .map { it.id }
+            .toSet()
+        val missing = outletIds.toSet() - psgsOutletIds
+        require(missing.isEmpty()) { "Outlet tidak ditemukan di midware_master.merchant_outlets: ${missing.joinToString(",")}" }
     }
 
     private fun clearBindings(discountId: Long) {

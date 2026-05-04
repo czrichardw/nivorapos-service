@@ -51,10 +51,6 @@ class PaymentSettingService(
             serviceChargePercentage = request.serviceChargePercentage,
             serviceChargeAmount = request.serviceChargeAmount,
             serviceChargeSource = request.serviceChargeSource?.uppercase(),
-            isTax = request.isTax,
-            taxPercentage = request.taxPercentage,
-            taxName = request.taxName,
-            taxMode = request.taxMode,
             createdBy = username,
             createdDate = now,
             modifiedBy = username,
@@ -84,10 +80,6 @@ class PaymentSettingService(
         setting.serviceChargePercentage = request.serviceChargePercentage
         setting.serviceChargeAmount = request.serviceChargeAmount
         setting.serviceChargeSource = request.serviceChargeSource?.uppercase()
-        setting.isTax = request.isTax
-        setting.taxPercentage = request.taxPercentage
-        setting.taxName = request.taxName
-        setting.taxMode = request.taxMode
         setting.modifiedBy = username
         setting.modifiedDate = now
 
@@ -158,12 +150,6 @@ class PaymentSettingService(
                 "roundingType harus FLOOR, CEIL, atau ROUND"
             }
         }
-        if (request.isTax) {
-            require(request.taxPercentage >= java.math.BigDecimal("0.01") &&
-                    request.taxPercentage <= java.math.BigDecimal("100")) {
-                "taxPercentage harus antara 0.01 dan 100 jika isTax = true"
-            }
-        }
     }
 
     private fun PaymentSetting.toResponse() = PaymentSettingResponse(
@@ -177,10 +163,6 @@ class PaymentSettingService(
         serviceChargePercentage = serviceChargePercentage,
         serviceChargeAmount = serviceChargeAmount,
         serviceChargeSource = serviceChargeSource,
-        isTax = isTax,
-        taxPercentage = taxPercentage,
-        taxName = taxName,
-        taxMode = taxMode,
         createdBy = createdBy,
         createdDate = createdDate,
         modifiedBy = modifiedBy,

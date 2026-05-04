@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "cashlez-pos-collection",
     "name": "Cashlez POS API",
-    "description": "Postman collection for Cashlez POS Service. Base URL: https://siravine.cashup.id/\n\nEnvironments:\n- envOctopus (Production): https://octopus-decoupling.cashlez.com/\n- envLionFish (ASG):       https://lionfish-decoupling.cashlez.com/\n- envOrca:                 https://orca.cashlez.com/\n- envAngelfish:            https://angelfish.cashlez.com/\n- envSword (Staging):      https://sword-decoupling.cashlez.com/\n- envTucanos:              https://tucanos.cashup.id/\n\nPOS Service uses dedicated URL: https://siravine.cashup.id/\nUpload Service uses dedicated URL: https://virellon.cashup.id/\n\nAuthN: Login via POST /pos/auth/login to get token, then set {{pos_token}} variable.",
+    "description": "Postman collection for the current Nivora/Cashlez POS service. Auth uses PSGS/midware_master. Image upload/delete uses MinIO only. Product price uses basePrice; payment_setting no longer contains tax fields.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -13,16 +13,27 @@
       "description": "Base URL for POS API"
     },
     {
-      "key": "upload_base_url",
-      "value": "https://virellon.cashup.id",
+      "key": "image_base_url",
+      "value": "https://siravine.cashup.id",
       "type": "string",
-      "description": "Base URL for Upload API"
+      "description": "Base URL for /images endpoints in this service"
     },
     {
       "key": "pos_token",
       "value": "",
       "type": "string",
-      "description": "Bearer token dari response /pos/auth/login"
+      "description": "Bearer token from /pos/auth/login or PSGS session token"
+    },
+    {
+      "key": "merchant_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "outlet_id",
+      "value": "1",
+      "type": "string",
+      "description": "PSGS midware_master.merchant_outlets id"
     },
     {
       "key": "product_id",
@@ -45,11 +56,6 @@
       "type": "string"
     },
     {
-      "key": "payment_setting_id",
-      "value": "1",
-      "type": "string"
-    },
-    {
       "key": "variant_group_id",
       "value": "1",
       "type": "string"
@@ -60,14 +66,46 @@
       "type": "string"
     },
     {
-      "key": "modifier_group_id",
+      "key": "modifier_id",
       "value": "1",
       "type": "string"
     },
     {
-      "key": "modifier_id",
+      "key": "discount_id",
       "value": "1",
       "type": "string"
+    },
+    {
+      "key": "promotion_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "role_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "permission_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "merchant_role_permission_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "image_url",
+      "value": "",
+      "type": "string",
+      "description": "MinIO public full image URL"
+    },
+    {
+      "key": "image_thumb_url",
+      "value": "",
+      "type": "string",
+      "description": "MinIO public thumbnail URL"
     }
   ],
   "auth": {
@@ -86,25 +124,7 @@
       "item": [
         {
           "name": "Login",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "var jsonData = pm.response.json();",
-                  "if (jsonData && jsonData.data && jsonData.data.token) {",
-                  "    pm.collectionVariables.set('pos_token', jsonData.data.token);",
-                  "    console.log('Token saved:', jsonData.data.token);",
-                  "}"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ],
           "request": {
-            "auth": {
-              "type": "noauth"
-            },
             "method": "POST",
             "header": [
               {
@@ -112,15 +132,6 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"username\": \"your_username\",\n  \"password\": \"123456\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/auth/login",
               "host": [
@@ -132,16 +143,95 @@
                 "login"
               ]
             },
-            "description": "Login ke POS dan dapatkan token. Token akan otomatis disimpan ke variabel {{pos_token}}."
+            "description": "Login via PSGS/midware_master. The returned PSGS token is saved into {{pos_token}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"your_username\",\n  \"password\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
           },
-          "response": [
+          "response": [],
+          "event": [
             {
-              "name": "Login Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Login successful\",\n  \"data\": {\n    \"token\": \"eyJhbGciOiJIUzI1NiJ9...\"\n  }\n}"
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData && jsonData.data && jsonData.data.token) {",
+                  "    pm.collectionVariables.set(\"pos_token\", jsonData.data.token);",
+                  "    pm.environment.set(\"pos_token\", jsonData.data.token);",
+                  "}"
+                ]
+              }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "Image",
+      "item": [
+        {
+          "name": "Upload Image (MinIO)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{image_base_url}}/images/upload",
+              "host": [
+                "{{image_base_url}}"
+              ],
+              "path": [
+                "images",
+                "upload"
+              ]
+            },
+            "description": "Upload product image to MinIO. Returns urlFull and urlThumb; save them into product imageUrl/imageThumbUrl."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Image (MinIO)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{image_base_url}}/images/delete?url={{image_url}}",
+              "host": [
+                "{{image_base_url}}"
+              ],
+              "path": [
+                "images",
+                "delete?url={{image_url}}"
+              ]
+            },
+            "description": "Deletes the MinIO object if the URL belongs to the configured MinIO public URL.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
         }
       ]
     },
@@ -154,81 +244,19 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{pos_base_url}}/pos/product/list?size=10",
+              "raw": "{{pos_base_url}}/pos/product/list?page=0&size=10&sortBy=createdDate&sortDir=DESC",
               "host": [
                 "{{pos_base_url}}"
               ],
               "path": [
                 "pos",
                 "product",
-                "list"
-              ],
-              "query": [
-                {
-                  "key": "size",
-                  "value": "10",
-                  "description": "Jumlah item per halaman (required)"
-                },
-                {
-                  "key": "categoryId",
-                  "value": "",
-                  "description": "Filter by category ID",
-                  "disabled": true
-                },
-                {
-                  "key": "keyword",
-                  "value": "",
-                  "description": "Filter by keyword (nama produk)",
-                  "disabled": true
-                },
-                {
-                  "key": "startDate",
-                  "value": "",
-                  "description": "Filter from date (yyyy-MM-dd)",
-                  "disabled": true
-                },
-                {
-                  "key": "endDate",
-                  "value": "",
-                  "description": "Filter to date (yyyy-MM-dd)",
-                  "disabled": true
-                },
-                {
-                  "key": "upc",
-                  "value": "",
-                  "description": "Filter by UPC",
-                  "disabled": true
-                },
-                {
-                  "key": "sku",
-                  "value": "",
-                  "description": "Filter by SKU",
-                  "disabled": true
-                },
-                {
-                  "key": "sortBy",
-                  "value": "",
-                  "description": "Sort field",
-                  "disabled": true
-                },
-                {
-                  "key": "sortDir",
-                  "value": "asc",
-                  "description": "Sort direction: asc / desc",
-                  "disabled": true
-                }
+                "list?page=0&size=10&sortBy=createdDate&sortDir=DESC"
               ]
             },
-            "description": "Ambil daftar produk dengan pagination dan filter opsional."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "List Products Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"meta\": {\n    \"baseUrl\": \"https://virellon.cashup.id/\"\n  },\n  \"data\": [\n    {\n      \"id\": 1,\n      \"merchantId\": 100,\n      \"merchantName\": \"Toko ABC\",\n      \"name\": \"Kopi Susu\",\n      \"sku\": \"SKU-001\",\n      \"upc\": \"UPC-001\",\n      \"imageUrl\": \"https://...\",\n      \"imageThumbUrl\": \"https://...\",\n      \"description\": \"Kopi susu nikmat\",\n      \"basePrice\": 15000.0,\n      \"finalPrice\": 15000.0,\n      \"isPriceIncludeTax\": false,\n      \"isTaxable\": false,\n      \"tax\": null,\n      \"qty\": 50,\n      \"createdDate\": \"2026-01-01T00:00:00\",\n      \"categories\": [],\n      \"productImages\": []\n    }\n  ],\n  \"page\": 0,\n  \"size\": 10,\n  \"totalElements\": 1,\n  \"totalPages\": 1\n}"
-            }
-          ]
+          "response": []
         },
         {
           "name": "Get Product Detail",
@@ -247,16 +275,9 @@
                 "{{product_id}}"
               ]
             },
-            "description": "Ambil detail produk berdasarkan product ID."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "Get Product Detail Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"meta\": {\n    \"baseUrl\": \"https://virellon.cashup.id/\"\n  },\n  \"data\": {\n    \"id\": 1,\n    \"merchantId\": 100,\n    \"merchantName\": \"Toko ABC\",\n    \"name\": \"Kopi Susu\",\n    \"sku\": \"SKU-001\",\n    \"upc\": \"UPC-001\",\n    \"imageUrl\": \"https://...\",\n    \"imageThumbUrl\": \"https://...\",\n    \"description\": \"Kopi susu nikmat\",\n    \"basePrice\": 15000.0,\n    \"finalPrice\": 15000.0,\n    \"isPriceIncludeTax\": false,\n    \"isTaxable\": false,\n    \"tax\": null,\n    \"qty\": 50,\n    \"createdDate\": \"2026-01-01T00:00:00\",\n    \"categories\": [\n      { \"id\": 1, \"name\": \"Minuman\" }\n    ],\n    \"productImages\": []\n  }\n}"
-            }
-          ]
+          "response": []
         },
         {
           "name": "Create Product",
@@ -268,15 +289,6 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Kopi Susu\",\n  \"price\": 15000.0,\n  \"sku\": \"SKU-001\",\n  \"upc\": \"UPC-001\",\n  \"imageUrl\": \"https://virellon.cashup.id/images/sample.jpg\",\n  \"imageThumbUrl\": \"https://virellon.cashup.id/images/sample_thumb.jpg\",\n  \"description\": \"Kopi susu nikmat\",\n  \"qty\": 100,\n  \"productType\": \"SIMPLE\",\n  \"isStock\": true,\n  \"categoryIds\": [1, 2]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/product/add",
               "host": [
@@ -288,16 +300,18 @@
                 "add"
               ]
             },
-            "description": "Tambah produk baru. categoryIds bersifat opsional."
-          },
-          "response": [
-            {
-              "name": "Create Product Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Product created successfully\",\n  \"data\": {\n    \"productId\": 1,\n    \"name\": \"Kopi Susu\"\n  }\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Kopi Susu Signature\",\n  \"productType\": \"SIMPLE\",\n  \"sku\": \"BVR-001\",\n  \"upc\": \"8991234000001\",\n  \"imageUrl\": \"{{image_url}}\",\n  \"imageThumbUrl\": \"{{image_thumb_url}}\",\n  \"description\": \"Kopi susu dengan susu segar pilihan\",\n  \"stockMode\": \"TRACK\",\n  \"basePrice\": 28000,\n  \"isTaxable\": true,\n  \"taxId\": 1,\n  \"isStock\": true,\n  \"qty\": 100,\n  \"categoryIds\": [{{category_id}}]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "Update Product",
@@ -309,15 +323,6 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"productId\": 1,\n  \"name\": \"Kopi Susu Updated\",\n  \"price\": 18000.0,\n  \"sku\": \"SKU-001\",\n  \"upc\": \"UPC-001\",\n  \"imageUrl\": \"https://virellon.cashup.id/images/sample.jpg\",\n  \"imageThumbUrl\": \"https://virellon.cashup.id/images/sample_thumb.jpg\",\n  \"description\": \"Kopi susu nikmat updated\",\n  \"isActive\": true,\n  \"isStock\": true,\n  \"categoryIds\": [1]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/product/update",
               "host": [
@@ -329,16 +334,18 @@
                 "update"
               ]
             },
-            "description": "Update data produk. productId wajib diisi di body."
-          },
-          "response": [
-            {
-              "name": "Update Product Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Product updated successfully\"\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": {{product_id}},\n  \"name\": \"Kopi Susu Signature Updated\",\n  \"basePrice\": 30000,\n  \"sku\": \"BVR-001\",\n  \"upc\": \"8991234000001\",\n  \"imageUrl\": \"{{image_url}}\",\n  \"imageThumbUrl\": \"{{image_thumb_url}}\",\n  \"description\": \"Updated description\",\n  \"stockMode\": \"TRACK\",\n  \"isTaxable\": true,\n  \"taxId\": 1,\n  \"categoryIds\": [{{category_id}}],\n  \"isActive\": true,\n  \"isStock\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "Delete Product",
@@ -357,31 +364,15 @@
                 "{{product_id}}"
               ]
             },
-            "description": "Hapus produk berdasarkan product ID."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "Delete Product Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Product deleted successfully\"\n}"
-            }
-          ]
+          "response": []
         },
         {
           "name": "Recalculate Prices",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{pos_token}}"
-              }
-            ],
+            "header": [],
             "url": {
               "raw": "{{pos_base_url}}/pos/product/recalculate-prices",
               "host": [
@@ -393,149 +384,81 @@
                 "recalculate-prices"
               ]
             },
-            "description": "Hitung ulang finalPrice dan taxAmount semua produk merchant berdasarkan basePrice dan payment setting aktif (tax percentage, isPriceIncludeTax). Tidak memerlukan request body."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "Recalculate Prices Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Prices recalculated successfully\",\n  \"data\": null\n}"
-            }
-          ]
-        },
-        {
-          "name": "Add Variant Group",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Ukuran\",\n  \"isRequired\": true,\n  \"displayOrder\": 1\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant-group/add",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "variant-group", "add"]
-            },
-            "description": "Tambah variant group baru ke produk. isRequired: apakah pelanggan wajib memilih variant."
-          },
-          "response": [
-            {
-              "name": "Add Variant Group Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Ukuran\",\n    \"isRequired\": true,\n    \"displayOrder\": 1,\n    \"isActive\": true,\n    \"variants\": []\n  }\n}"
-            }
-          ]
-        },
-        {
-          "name": "Update Variant Group",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Ukuran Updated\",\n  \"isRequired\": false,\n  \"displayOrder\": 2\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant-group/{{variant_group_id}}",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "variant-group", "{{variant_group_id}}"]
-            },
-            "description": "Update data variant group."
-          },
-          "response": [
-            {
-              "name": "Update Variant Group Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Ukuran Updated\",\n    \"isRequired\": false,\n    \"displayOrder\": 2,\n    \"isActive\": true,\n    \"variants\": []\n  }\n}"
-            }
-          ]
-        },
-        {
-          "name": "Delete Variant Group",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant-group/{{variant_group_id}}",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "variant-group", "{{variant_group_id}}"]
-            },
-            "description": "Hapus variant group. Gagal jika masih ada variant aktif di dalamnya."
-          },
-          "response": [
-            {
-              "name": "Delete Variant Group Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Variant group deleted\",\n  \"data\": null\n}"
-            }
-          ]
+          "response": []
         },
         {
           "name": "Add Variant",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"variantGroupId\": 1,\n  \"name\": \"Small\",\n  \"additionalPrice\": 0.0,\n  \"sku\": \"SKU-001-S\",\n  \"isStock\": true,\n  \"isDefault\": true,\n  \"qty\": 50\n}",
-              "options": { "raw": { "language": "json" } }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant/add",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "variant", "add"]
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "product",
+                "{{product_id}}",
+                "variant",
+                "add"
+              ]
             },
-            "description": "Tambah variant baru ke produk. isDefault: set sebagai pilihan default di group. isStock: apakah stok variant ini perlu dilacak. qty: stok awal (hanya diproses jika isStock=true)."
-          },
-          "response": [
-            {
-              "name": "Add Variant Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Small\",\n    \"additionalPrice\": 0.0,\n    \"sku\": \"SKU-001-S\",\n    \"isStock\": true,\n    \"isDefault\": true,\n    \"qty\": 50,\n    \"isActive\": true\n  }\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"variantGroupId\": {{variant_group_id}},\n  \"name\": \"Large\",\n  \"additionalPrice\": 5000,\n  \"sku\": \"BVR-001-L\",\n  \"isStock\": true,\n  \"isDefault\": false,\n  \"qty\": 25\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "Update Variant",
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"variantGroupId\": 1,\n  \"name\": \"Small Updated\",\n  \"additionalPrice\": 1000.0,\n  \"sku\": \"SKU-001-S\",\n  \"isStock\": true,\n  \"isDefault\": false,\n  \"qty\": 50\n}",
-              "options": { "raw": { "language": "json" } }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant/{{variant_id}}",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "variant", "{{variant_id}}"]
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "product",
+                "{{product_id}}",
+                "variant",
+                "{{variant_id}}"
+              ]
             },
-            "description": "Update data variant. Jika isDefault diubah ke true, default lama di group yang sama akan dicabut."
-          },
-          "response": [
-            {
-              "name": "Update Variant Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Small Updated\",\n    \"additionalPrice\": 1000.0,\n    \"sku\": \"SKU-001-S\",\n    \"isStock\": true,\n    \"isDefault\": false,\n    \"qty\": 50,\n    \"isActive\": true\n  }\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"variantGroupId\": {{variant_group_id}},\n  \"name\": \"Large\",\n  \"additionalPrice\": 5000,\n  \"sku\": \"BVR-001-L\",\n  \"isStock\": true,\n  \"isDefault\": false,\n  \"qty\": 25\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "Set Variant Active",
@@ -544,155 +467,93 @@
             "header": [],
             "url": {
               "raw": "{{pos_base_url}}/pos/product/{{product_id}}/variant/{{variant_id}}/active?isActive=false",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "variant", "{{variant_id}}", "active"],
-              "query": [
-                { "key": "isActive", "value": "false", "description": "true untuk aktifkan, false untuk nonaktifkan" }
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "product",
+                "{{product_id}}",
+                "variant",
+                "{{variant_id}}",
+                "active?isActive=false"
               ]
             },
-            "description": "Aktifkan atau nonaktifkan variant."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "Set Variant Active Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Small\",\n    \"isActive\": false\n  }\n}"
-            }
-          ]
-        },
-        {
-          "name": "Add Modifier Group",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Tingkat Kemanisan\",\n  \"isRequired\": false,\n  \"minSelect\": 0,\n  \"maxSelect\": 1,\n  \"displayOrder\": 1\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier-group/add",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "modifier-group", "add"]
-            },
-            "description": "Tambah modifier group baru ke produk. minSelect/maxSelect menentukan berapa modifier yang boleh dipilih."
-          },
-          "response": [
-            {
-              "name": "Add Modifier Group Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Tingkat Kemanisan\",\n    \"isRequired\": false,\n    \"minSelect\": 0,\n    \"maxSelect\": 1,\n    \"displayOrder\": 1,\n    \"isActive\": true,\n    \"modifiers\": []\n  }\n}"
-            }
-          ]
-        },
-        {
-          "name": "Update Modifier Group",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Tingkat Kemanisan Updated\",\n  \"isRequired\": true,\n  \"minSelect\": 1,\n  \"maxSelect\": 1,\n  \"displayOrder\": 2\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": {
-              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier-group/{{modifier_group_id}}",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "modifier-group", "{{modifier_group_id}}"]
-            },
-            "description": "Update data modifier group."
-          },
-          "response": [
-            {
-              "name": "Update Modifier Group Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Tingkat Kemanisan Updated\",\n    \"isRequired\": true,\n    \"minSelect\": 1,\n    \"maxSelect\": 1,\n    \"displayOrder\": 2,\n    \"isActive\": true,\n    \"modifiers\": []\n  }\n}"
-            }
-          ]
-        },
-        {
-          "name": "Delete Modifier Group",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier-group/{{modifier_group_id}}",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "modifier-group", "{{modifier_group_id}}"]
-            },
-            "description": "Hapus modifier group. Gagal jika masih ada modifier aktif di dalamnya."
-          },
-          "response": [
-            {
-              "name": "Delete Modifier Group Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Modifier group deleted\",\n  \"data\": null\n}"
-            }
-          ]
+          "response": []
         },
         {
           "name": "Add Modifier",
           "request": {
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"modifierGroupId\": 1,\n  \"name\": \"Normal\",\n  \"additionalPrice\": 0.0,\n  \"isStock\": false,\n  \"isDefault\": true\n}",
-              "options": { "raw": { "language": "json" } }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier/add",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "modifier", "add"]
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "product",
+                "{{product_id}}",
+                "modifier",
+                "add"
+              ]
             },
-            "description": "Tambah modifier baru ke produk. isDefault: set sebagai pilihan default di group. isStock: apakah stok modifier ini perlu dilacak (default false)."
-          },
-          "response": [
-            {
-              "name": "Add Modifier Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Normal\",\n    \"additionalPrice\": 0.0,\n    \"isStock\": false,\n    \"isDefault\": true,\n    \"isActive\": true\n  }\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Extra Shot\",\n  \"additionalPrice\": 5000,\n  \"isDefault\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "Update Modifier",
           "request": {
             "method": "PUT",
             "header": [
-              { "key": "Content-Type", "value": "application/json" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"modifierGroupId\": 1,\n  \"name\": \"Normal Updated\",\n  \"additionalPrice\": 2000.0,\n  \"isStock\": false,\n  \"isDefault\": false\n}",
-              "options": { "raw": { "language": "json" } }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier/{{modifier_id}}",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "modifier", "{{modifier_id}}"]
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "product",
+                "{{product_id}}",
+                "modifier",
+                "{{modifier_id}}"
+              ]
             },
-            "description": "Update data modifier. Jika isDefault diubah ke true, default lama di group yang sama akan dicabut."
-          },
-          "response": [
-            {
-              "name": "Update Modifier Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Normal Updated\",\n    \"additionalPrice\": 2000.0,\n    \"isStock\": false,\n    \"isDefault\": false,\n    \"isActive\": true\n  }\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Extra Shot\",\n  \"additionalPrice\": 5000,\n  \"isDefault\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "Set Modifier Active",
@@ -701,22 +562,134 @@
             "header": [],
             "url": {
               "raw": "{{pos_base_url}}/pos/product/{{product_id}}/modifier/{{modifier_id}}/active?isActive=false",
-              "host": ["{{pos_base_url}}"],
-              "path": ["pos", "product", "{{product_id}}", "modifier", "{{modifier_id}}", "active"],
-              "query": [
-                { "key": "isActive", "value": "false", "description": "true untuk aktifkan, false untuk nonaktifkan" }
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "product",
+                "{{product_id}}",
+                "modifier",
+                "{{modifier_id}}",
+                "active?isActive=false"
               ]
             },
-            "description": "Aktifkan atau nonaktifkan modifier."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "Set Modifier Active Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Normal\",\n    \"isActive\": false\n  }\n}"
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Variant Group",
+      "item": [
+        {
+          "name": "List Variant Groups",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/variant-group/list",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "variant-group",
+                "list"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Add Variant Group",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/variant-group/add",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "variant-group",
+                "add"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Size\",\n  \"isRequired\": true,\n  \"displayOrder\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
+        },
+        {
+          "name": "Update Variant Group",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/variant-group/{{variant_group_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "variant-group",
+                "{{variant_group_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Size\",\n  \"isRequired\": true,\n  \"displayOrder\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Variant Group",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/variant-group/{{variant_group_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "variant-group",
+                "{{variant_group_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
         }
       ]
     },
@@ -729,33 +702,19 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{pos_base_url}}/pos/category/list?size=50",
+              "raw": "{{pos_base_url}}/pos/category/list?page=0&size=50",
               "host": [
                 "{{pos_base_url}}"
               ],
               "path": [
                 "pos",
                 "category",
-                "list"
-              ],
-              "query": [
-                {
-                  "key": "size",
-                  "value": "50",
-                  "description": "Jumlah item per halaman (required)"
-                }
+                "list?page=0&size=50"
               ]
             },
-            "description": "Ambil daftar semua kategori produk."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "List Categories Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"meta\": {\n    \"baseUrl\": \"https://virellon.cashup.id/\"\n  },\n  \"data\": [\n    {\n      \"id\": 1,\n      \"name\": \"Minuman\",\n      \"imageUrl\": \"https://...\",\n      \"description\": \"Kategori minuman\"\n    }\n  ],\n  \"page\": 0,\n  \"size\": 50,\n  \"totalElements\": 1,\n  \"totalPages\": 1\n}"
-            }
-          ]
+          "response": []
         },
         {
           "name": "Get Category Detail",
@@ -774,16 +733,9 @@
                 "{{category_id}}"
               ]
             },
-            "description": "Ambil detail kategori berdasarkan category ID."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "Get Category Detail Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"meta\": { \"baseUrl\": \"https://virellon.cashup.id/\" },\n  \"data\": {\n    \"id\": 1,\n    \"name\": \"Minuman\",\n    \"imageUrl\": \"https://...\",\n    \"description\": \"Kategori minuman\"\n  }\n}"
-            }
-          ]
+          "response": []
         },
         {
           "name": "Create Category",
@@ -795,15 +747,6 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Minuman\",\n  \"image\": \"https://virellon.cashup.id/images/minuman.jpg\",\n  \"description\": \"Kategori untuk semua jenis minuman\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/category/single/add",
               "host": [
@@ -816,16 +759,18 @@
                 "add"
               ]
             },
-            "description": "Tambah kategori baru."
-          },
-          "response": [
-            {
-              "name": "Create Category Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Category created successfully\",\n  \"data\": {\n    \"categoryId\": 1,\n    \"name\": \"Minuman\"\n  }\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Minuman\",\n  \"image\": \"{{image_url}}\",\n  \"description\": \"Kategori minuman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "Update Category",
@@ -837,15 +782,6 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"categoryId\": 1,\n  \"name\": \"Minuman Updated\",\n  \"image\": \"https://virellon.cashup.id/images/minuman.jpg\",\n  \"description\": \"Kategori untuk semua jenis minuman - updated\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/category/update",
               "host": [
@@ -857,16 +793,18 @@
                 "update"
               ]
             },
-            "description": "Update data kategori. categoryId wajib diisi di body."
-          },
-          "response": [
-            {
-              "name": "Update Category Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Category updated successfully\"\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": {{category_id}},\n  \"name\": \"Minuman Updated\",\n  \"image\": \"{{image_url}}\",\n  \"description\": \"Updated description\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "Delete Category",
@@ -885,16 +823,9 @@
                 "{{category_id}}"
               ]
             },
-            "description": "Hapus kategori berdasarkan category ID."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "Delete Category Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Category deleted successfully\"\n}"
-            }
-          ]
+          "response": []
         }
       ]
     },
@@ -911,15 +842,6 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"productId\": 1,\n  \"qty\": 50,\n  \"updateType\": \"ADD\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/stock/update",
               "host": [
@@ -931,16 +853,18 @@
                 "update"
               ]
             },
-            "description": "Update stok produk. updateType: ADD (tambah stok) atau REDUCE (kurangi stok)."
-          },
-          "response": [
-            {
-              "name": "Update Stock Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Stock updated successfully\"\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": {{product_id}},\n  \"qty\": 10,\n  \"updateType\": \"ADD\",\n  \"variantId\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "List Stock Movement",
@@ -948,7 +872,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{pos_base_url}}/pos/stock-movement/product/list?productId=1&startDate=2026-01-01&endDate=2026-12-31",
+              "raw": "{{pos_base_url}}/pos/stock-movement/product/list?productId={{product_id}}&startDate=2026-01-01&endDate=2026-12-31",
               "host": [
                 "{{pos_base_url}}"
               ],
@@ -956,36 +880,12 @@
                 "pos",
                 "stock-movement",
                 "product",
-                "list"
-              ],
-              "query": [
-                {
-                  "key": "productId",
-                  "value": "1",
-                  "description": "ID produk (required)"
-                },
-                {
-                  "key": "startDate",
-                  "value": "2026-01-01",
-                  "description": "Tanggal mulai (required, format: yyyy-MM-dd)"
-                },
-                {
-                  "key": "endDate",
-                  "value": "2026-12-31",
-                  "description": "Tanggal akhir (required, format: yyyy-MM-dd)"
-                }
+                "list?productId={{product_id}}&startDate=2026-01-01&endDate=2026-12-31"
               ]
             },
-            "description": "Ambil riwayat pergerakan stok untuk suatu produk dalam rentang tanggal."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "List Stock Movement Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": [\n    {\n      \"productId\": 1,\n      \"qty\": 50,\n      \"movementType\": \"ADD\",\n      \"movementReason\": \"Manual stock update\",\n      \"localDateTime\": \"2026-01-15T10:00:00\"\n    }\n  ],\n  \"page\": 0,\n  \"size\": 10,\n  \"totalElements\": 1,\n  \"totalPages\": 1\n}"
-            }
-          ]
+          "response": []
         }
       ]
     },
@@ -998,58 +898,19 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{pos_base_url}}/pos/transaction/list?page=0&size=10&startDate=2026-01-01&endDate=2026-12-31&sortBy=transactionDate&sortType=DESC",
+              "raw": "{{pos_base_url}}/pos/transaction/list?page=0&size=10&startDate=2026-01-01&endDate=2026-12-31",
               "host": [
                 "{{pos_base_url}}"
               ],
               "path": [
                 "pos",
                 "transaction",
-                "list"
-              ],
-              "query": [
-                {
-                  "key": "page",
-                  "value": "0",
-                  "description": "Nomor halaman, mulai dari 0 (required)"
-                },
-                {
-                  "key": "size",
-                  "value": "10",
-                  "description": "Jumlah item per halaman (required)"
-                },
-                {
-                  "key": "startDate",
-                  "value": "2026-01-01",
-                  "description": "Tanggal mulai (required, format: yyyy-MM-dd)"
-                },
-                {
-                  "key": "endDate",
-                  "value": "2026-12-31",
-                  "description": "Tanggal akhir (required, format: yyyy-MM-dd)"
-                },
-                {
-                  "key": "sortBy",
-                  "value": "transactionDate",
-                  "description": "Field untuk sorting (required)"
-                },
-                {
-                  "key": "sortType",
-                  "value": "DESC",
-                  "description": "Arah sort: ASC / DESC (required, query param key: sortType)"
-                }
+                "list?page=0&size=10&startDate=2026-01-01&endDate=2026-12-31"
               ]
             },
-            "description": "Ambil daftar transaksi dengan pagination dan filter tanggal."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "List Transactions Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": [\n    {\n      \"id\": 1,\n      \"trxId\": \"TRX-2026-001\",\n      \"code\": \"TRX-2026-001\",\n      \"paymentMethod\": \"CASH\",\n      \"status\": \"PAID\",\n      \"totalAmount\": \"50000\",\n      \"transactionDate\": \"2026-01-15T10:00:00\",\n      \"transactionType\": \"POS\",\n      \"queueNumber\": \"A001\"\n    }\n  ],\n  \"page\": 0,\n  \"size\": 10,\n  \"totalElements\": 1,\n  \"totalPages\": 1\n}"
-            }
-          ]
+          "response": []
         },
         {
           "name": "Get Transaction Detail",
@@ -1068,16 +929,9 @@
                 "{{transaction_id}}"
               ]
             },
-            "description": "Ambil detail transaksi berdasarkan transaction ID (Long)."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "Get Transaction Detail Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"transactionId\": 1,\n    \"code\": \"TRX-2026-001\",\n    \"status\": \"PAID\",\n    \"paymentMethod\": \"CASH\",\n    \"subTotal\": \"45000\",\n    \"totalTax\": \"4500\",\n    \"totalServiceCharge\": \"0\",\n    \"totalRounding\": \"0\",\n    \"totalAmount\": \"50000\",\n    \"cashTendered\": \"50000\",\n    \"cashChange\": \"500\",\n    \"queueNumber\": \"A001\",\n    \"notes\": \"Catatan pesanan\",\n    \"transactionDate\": \"2026-01-15T10:00:00\",\n    \"taxName\": \"PPN\",\n    \"taxPercentage\": \"10\",\n    \"roundingTarget\": \"0\",\n    \"roundingType\": \"NONE\",\n    \"serviceChargeAmount\": \"0\",\n    \"serviceChargePercentage\": \"0\",\n    \"transactionItems\": [\n      {\n        \"productId\": 1,\n        \"productName\": \"Kopi Susu\",\n        \"price\": \"15000\",\n        \"qty\": 3,\n        \"totalPrice\": \"45000\"\n      }\n    ],\n    \"payments\": [\n      {\n        \"transactionId\": 1,\n        \"paymentMethod\": \"CASH\",\n        \"amountPaid\": \"50000\",\n        \"status\": \"PAID\",\n        \"paymentReference\": \"\",\n        \"paymentDate\": \"2026-01-15T10:00:00\"\n      }\n    ]\n  }\n}"
-            }
-          ]
+          "response": []
         },
         {
           "name": "Create Transaction",
@@ -1089,15 +943,6 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"subTotal\": \"45000\",\n  \"totalServiceCharge\": \"0\",\n  \"totalTax\": \"4500\",\n  \"totalRounding\": \"0\",\n  \"totalAmount\": \"50000\",\n  \"paymentMethod\": \"CASH\",\n  \"cashTendered\": \"50000\",\n  \"cashChange\": \"500\",\n  \"priceIncludeTax\": false,\n  \"queueNumber\": 1,\n  \"notes\": \"Catatan pesanan pelanggan\",\n  \"transactionItems\": [\n    {\n      \"productId\": 1,\n      \"productName\": \"Kopi Susu\",\n      \"price\": \"15000\",\n      \"qty\": 3,\n      \"totalPrice\": \"45000\",\n      \"taxId\": null,\n      \"taxAmount\": null\n    }\n  ]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/transaction/create",
               "host": [
@@ -1109,16 +954,18 @@
                 "create"
               ]
             },
-            "description": "Buat transaksi baru. Semua nilai amount dikirim sebagai String. paymentMethod: CASH, QRIS, DEBIT, CREDIT, dll. queueNumber dan notes bersifat opsional."
-          },
-          "response": [
-            {
-              "name": "Create Transaction Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Transaction created successfully\",\n  \"data\": {\n    \"id\": 1,\n    \"trxId\": \"TRX-2026-001\",\n    \"queueNumber\": \"A001\"\n  }\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outletId\": {{outlet_id}},\n  \"transactionOrigin\": \"POS\",\n  \"paymentMethod\": \"CASH\",\n  \"priceIncludeTax\": false,\n  \"subTotal\": \"28000\",\n  \"totalAmount\": \"31080\",\n  \"serviceChargePercentage\": \"0\",\n  \"serviceChargeAmount\": \"0\",\n  \"totalServiceCharge\": \"0\",\n  \"taxPercentage\": \"11\",\n  \"totalTax\": \"3080\",\n  \"taxName\": \"PPN 11%\",\n  \"totalRounding\": \"0\",\n  \"cashTendered\": \"50000\",\n  \"cashChange\": \"18920\",\n  \"paymentSource\": \"POS\",\n  \"customerId\": null,\n  \"items\": [{\n    \"productId\": {{product_id}},\n    \"qty\": 1,\n    \"price\": \"28000\",\n    \"taxId\": 1,\n    \"taxAmount\": \"3080\",\n    \"variantId\": null,\n    \"modifierIds\": []\n  }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "Update Transaction",
@@ -1130,15 +977,40 @@
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/transaction/update",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "transaction",
+                "update"
+              ]
+            },
+            "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"paymentTrxId\": \"PAY-2026-001\",\n  \"paymentMethod\": \"QRIS\",\n  \"amountPaid\": 50000.0,\n  \"status\": \"PAID\",\n  \"paymentReference\": \"REF-QRIS-12345\",\n  \"paymentDate\": \"2026-01-15T10:00:00\"\n}",
+              "raw": "{\n  \"transactionId\": {{transaction_id}},\n  \"code\": \"{{merchant_trx_id}}\",\n  \"status\": \"COMPLETED\",\n  \"paymentStatus\": \"PAID\",\n  \"paymentMethod\": \"CASH\",\n  \"paymentReference\": \"REF-001\",\n  \"amountPaid\": 31080,\n  \"cashTendered\": \"50000\",\n  \"cashChange\": \"18920\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Transaction By Merchant Trx ID",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{pos_base_url}}/pos/transaction/update/{{merchant_trx_id}}",
               "host": [
@@ -1151,61 +1023,29 @@
                 "{{merchant_trx_id}}"
               ]
             },
-            "description": "Update status pembayaran transaksi. merchantTrxId adalah trxId dari response create transaction. paymentTrxId bersifat opsional (nullable)."
-          },
-          "response": [
-            {
-              "name": "Update Transaction Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Transaction updated successfully\"\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": {{transaction_id}},\n  \"code\": \"{{merchant_trx_id}}\",\n  \"status\": \"COMPLETED\",\n  \"paymentStatus\": \"PAID\",\n  \"paymentMethod\": \"CASH\",\n  \"paymentReference\": \"REF-001\",\n  \"amountPaid\": 31080,\n  \"cashTendered\": \"50000\",\n  \"cashChange\": \"18920\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
-          "name": "Initiate Payment (QRIS Notify)",
+          "name": "Initiate Payment",
           "request": {
             "method": "PUT",
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
-              },
-              {
-                "key": "Authorization",
-                "value": "Bearer {{pos_token}}",
-                "description": "JWT token dari /pos/auth/login"
-              },
-              {
-                "key": "pos-token",
-                "value": "{{pos_token_encrypted}}",
-                "description": "AES/ECB/PKCS5 encrypted: username|timestamp_epoch (Base64 URL-safe)"
-              },
-              {
-                "key": "pos-key",
-                "value": "{{timestamp_epoch}}",
-                "description": "Unix epoch seconds saat request dibuat"
-              },
-              {
-                "key": "version-id",
-                "value": "{{version_id}}",
-                "description": "BuildConfig.VERSION_CODE aplikasi"
-              },
-              {
-                "key": "device-id",
-                "value": "{{device_id}}",
-                "description": "Serial number perangkat"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"paymentMethod\": \"QRIS\",\n  \"totalAmount\": \"10000.00\",\n  \"paymentTrxId\": \"CZ-TRX-ID-001\",\n  \"additionalInfo\": {\n    \"qrContent\": \"00020101021226600014ID.CO.CASHLEZ.WWW011893600898002087690102150000870269010220303UBE51440014ID.CO.QRIS.WWW0215ID20230607421850303UBE5204542253033605802ID5914MERCHANT NAME6013JAKARTA PUSAT610512345621170113TRX-2026-001630450A4\"\n  }\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/transaction/initiate-payment/{{merchant_trx_id}}",
               "host": [
@@ -1218,61 +1058,18 @@
                 "{{merchant_trx_id}}"
               ]
             },
-            "description": "Notify POS server setelah QR code berhasil di-generate.\n\nDipanggil oleh app (GenerateQrViewModel) segera setelah generate QRIS sukses. Memiliki retry logic 3x dengan delay 2s & 4s.\n\nURL path: /pos/transaction/initiate-payment/{merchantTrxId}\n- merchantTrxId: ID transaksi merchant dari data param QRIS (merchant_trx_id)\n\nHeaders khusus:\n- pos-token: AES/ECB/PKCS5Padding encrypted string \"username|timestamp_epoch\", di-encode Base64 URL-safe\n- pos-key: Unix epoch seconds (sama dengan timestamp yang digunakan di pos-token)\n- version-id: BuildConfig.VERSION_CODE\n- device-id: Serial number perangkat"
-          },
-          "response": [
-            {
-              "name": "Initiate Payment Success",
-              "originalRequest": {
-                "method": "PUT",
-                "header": [
-                  {
-                    "key": "Content-Type",
-                    "value": "application/json"
-                  },
-                  {
-                    "key": "Authorization",
-                    "value": "Bearer {{pos_token}}"
-                  },
-                  {
-                    "key": "pos-token",
-                    "value": "{{pos_token_encrypted}}"
-                  },
-                  {
-                    "key": "pos-key",
-                    "value": "{{timestamp_epoch}}"
-                  },
-                  {
-                    "key": "version-id",
-                    "value": "{{version_id}}"
-                  },
-                  {
-                    "key": "device-id",
-                    "value": "{{device_id}}"
-                  }
-                ],
-                "body": {
-                  "mode": "raw",
-                  "raw": "{\n  \"paymentMethod\": \"QRIS\",\n  \"totalAmount\": \"10000.00\",\n  \"paymentTrxId\": \"CZ-TRX-ID-001\",\n  \"additionalInfo\": {\n    \"qrContent\": \"00020101...\"\n  }\n}"
-                },
-                "url": {
-                  "raw": "{{pos_base_url}}/pos/transaction/initiate-payment/TRX-001",
-                  "host": [
-                    "{{pos_base_url}}"
-                  ],
-                  "path": [
-                    "pos",
-                    "transaction",
-                    "initiate-payment",
-                    "TRX-001"
-                  ]
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentMethod\": \"QRIS\",\n  \"totalAmount\": \"31080\",\n  \"paymentTrxId\": \"PAY-001\",\n  \"additionalInfo\": { \"qrContent\": \"000201010212...\" }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
                 }
-              },
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Payment initiated successfully\"\n}"
+              }
             }
-          ]
+          },
+          "response": []
         }
       ]
     },
@@ -1294,16 +1091,9 @@
                 "payment-setting"
               ]
             },
-            "description": "Ambil konfigurasi payment setting merchant (tax, rounding, service charge)."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "Get Payment Setting Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"paymentSettingId\": 1,\n    \"isPriceIncludeTax\": false,\n    \"isRounding\": false,\n    \"roundingTarget\": 0,\n    \"roundingType\": \"NONE\",\n    \"isServiceCharge\": false,\n    \"serviceChargePercentage\": 0.0,\n    \"serviceChargeAmount\": 0.0,\n    \"isTax\": true,\n    \"taxPercentage\": 10.0,\n    \"taxName\": \"PPN\"\n  }\n}"
-            }
-          ]
+          "response": []
         },
         {
           "name": "Create Payment Setting",
@@ -1315,15 +1105,6 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"isPriceIncludeTax\": false,\n  \"isRounding\": false,\n  \"roundingTarget\": 0,\n  \"roundingType\": \"NONE\",\n  \"isServiceCharge\": false,\n  \"serviceChargePercentage\": 0.0,\n  \"serviceChargeAmount\": 0.0,\n  \"isTax\": true,\n  \"taxPercentage\": 10.0,\n  \"taxName\": \"PPN\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/payment-setting/create",
               "host": [
@@ -1335,16 +1116,18 @@
                 "create"
               ]
             },
-            "description": "Buat konfigurasi payment setting baru. roundingType: NONE, UP, DOWN. roundingTarget: target nilai pembulatan (misal 100, 500, 1000)."
-          },
-          "response": [
-            {
-              "name": "Create Payment Setting Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Payment setting created successfully\"\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isPriceIncludeTax\": false,\n  \"isRounding\": false,\n  \"roundingTarget\": 0,\n  \"roundingType\": \"NONE\",\n  \"isServiceCharge\": false,\n  \"serviceChargePercentage\": 0,\n  \"serviceChargeAmount\": 0,\n  \"serviceChargeSource\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "Update Payment Setting",
@@ -1356,15 +1139,6 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"paymentSettingId\": 1,\n  \"isPriceIncludeTax\": false,\n  \"isRounding\": true,\n  \"roundingTarget\": 1000,\n  \"roundingType\": \"UP\",\n  \"isServiceCharge\": true,\n  \"serviceChargePercentage\": 5.0,\n  \"serviceChargeAmount\": 0.0,\n  \"isTax\": true,\n  \"taxPercentage\": 11.0,\n  \"taxName\": \"PPN\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
               "raw": "{{pos_base_url}}/pos/payment-setting/update",
               "host": [
@@ -1376,16 +1150,18 @@
                 "update"
               ]
             },
-            "description": "Update konfigurasi payment setting. paymentSettingId wajib diisi di body."
-          },
-          "response": [
-            {
-              "name": "Update Payment Setting Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Payment setting updated successfully\"\n}"
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isPriceIncludeTax\": false,\n  \"isRounding\": false,\n  \"roundingTarget\": 0,\n  \"roundingType\": \"NONE\",\n  \"isServiceCharge\": false,\n  \"serviceChargePercentage\": 0,\n  \"serviceChargeAmount\": 0,\n  \"serviceChargeSource\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
         },
         {
           "name": "List Payment Methods",
@@ -1404,16 +1180,486 @@
                 "list"
               ]
             },
-            "description": "Ambil daftar metode pembayaran yang tersedia untuk merchant (internal dan external)."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "List Payment Methods Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"internalPayments\": [\n      {\n        \"code\": \"CASH\",\n        \"name\": \"Cash\",\n        \"category\": \"INTERNAL\",\n        \"paymentType\": \"CASH\",\n        \"provider\": \"\"\n      }\n    ],\n    \"externalPayments\": [\n      {\n        \"code\": \"QRIS\",\n        \"name\": \"QRIS\",\n        \"category\": \"EXTERNAL\",\n        \"paymentType\": \"QRIS\",\n        \"provider\": \"QRIS_PROVIDER\"\n      },\n      {\n        \"code\": \"DEBIT\",\n        \"name\": \"Debit Card\",\n        \"category\": \"EXTERNAL\",\n        \"paymentType\": \"CARD\",\n        \"provider\": \"EDC\"\n      }\n    ]\n  }\n}"
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Discount",
+      "item": [
+        {
+          "name": "List Discounts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/discount/list",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "discount",
+                "list"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get Discount Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/discount/detail/{{discount_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "discount",
+                "detail",
+                "{{discount_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Create Discount",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/discount/add",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "discount",
+                "add"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Diskon Kopi\",\n  \"code\": \"KOPI10\",\n  \"valueType\": \"PERCENTAGE\",\n  \"value\": 10,\n  \"maxDiscountAmount\": 10000,\n  \"minPurchase\": 25000,\n  \"scope\": \"PRODUCT\",\n  \"productIds\": [{{product_id}}],\n  \"categoryIds\": [],\n  \"channel\": \"POS\",\n  \"visibility\": \"ALL_OUTLET\",\n  \"outletIds\": [],\n  \"usageLimit\": 100,\n  \"usagePerCustomer\": 1,\n  \"startDate\": \"2026-01-01T00:00:00\",\n  \"endDate\": \"2026-12-31T23:59:59\",\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
-          ]
+          },
+          "response": []
+        },
+        {
+          "name": "Update Discount",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/discount/update/{{discount_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "discount",
+                "update",
+                "{{discount_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Diskon Kopi\",\n  \"code\": \"KOPI10\",\n  \"valueType\": \"PERCENTAGE\",\n  \"value\": 10,\n  \"maxDiscountAmount\": 10000,\n  \"minPurchase\": 25000,\n  \"scope\": \"PRODUCT\",\n  \"productIds\": [{{product_id}}],\n  \"categoryIds\": [],\n  \"channel\": \"POS\",\n  \"visibility\": \"ALL_OUTLET\",\n  \"outletIds\": [],\n  \"usageLimit\": 100,\n  \"usagePerCustomer\": 1,\n  \"startDate\": \"2026-01-01T00:00:00\",\n  \"endDate\": \"2026-12-31T23:59:59\",\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Discount",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/discount/delete/{{discount_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "discount",
+                "delete",
+                "{{discount_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "List Available Discounts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/discount/list-available?outletId={{outlet_id}}&transactionTotal=28000",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "discount",
+                "list-available?outletId={{outlet_id}}&transactionTotal=28000"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Validate Discount",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/discount/validate",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "discount",
+                "validate"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"KOPI10\",\n  \"discountId\": null,\n  \"transactionTotal\": 28000,\n  \"outletId\": {{outlet_id}},\n  \"customerId\": null,\n  \"items\": [{\n    \"productId\": {{product_id}},\n    \"qty\": 1,\n    \"price\": 28000,\n    \"categoryIds\": [{{category_id}}]\n  }]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Promotion",
+      "item": [
+        {
+          "name": "List Promotions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/promotion/list",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "promotion",
+                "list"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Get Promotion Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/promotion/detail/{{promotion_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "promotion",
+                "detail",
+                "{{promotion_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Create Promotion",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/promotion/add",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "promotion",
+                "add"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Promo Order 10%\",\n  \"promoType\": \"DISCOUNT_BY_ORDER\",\n  \"priority\": 1,\n  \"canCombine\": false,\n  \"isActive\": true,\n  \"value\": 10,\n  \"valueType\": \"PERCENTAGE\",\n  \"maxDiscountAmount\": 10000,\n  \"buyQty\": null,\n  \"getQty\": null,\n  \"rewardType\": null,\n  \"rewardValue\": null,\n  \"isMultiplied\": false,\n  \"buyScope\": \"ALL\",\n  \"buyProductIds\": [],\n  \"buyCategoryIds\": [],\n  \"rewardScope\": \"ALL\",\n  \"rewardProductIds\": [],\n  \"rewardCategoryIds\": [],\n  \"minPurchase\": 25000,\n  \"channel\": \"POS\",\n  \"visibility\": \"ALL_OUTLET\",\n  \"outletIds\": [],\n  \"validDays\": [],\n  \"startDate\": \"2026-01-01T00:00:00\",\n  \"endDate\": \"2026-12-31T23:59:59\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update Promotion",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/promotion/update/{{promotion_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "promotion",
+                "update",
+                "{{promotion_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Promo Order 10%\",\n  \"promoType\": \"DISCOUNT_BY_ORDER\",\n  \"priority\": 1,\n  \"canCombine\": false,\n  \"isActive\": true,\n  \"value\": 10,\n  \"valueType\": \"PERCENTAGE\",\n  \"maxDiscountAmount\": 10000,\n  \"buyQty\": null,\n  \"getQty\": null,\n  \"rewardType\": null,\n  \"rewardValue\": null,\n  \"isMultiplied\": false,\n  \"buyScope\": \"ALL\",\n  \"buyProductIds\": [],\n  \"buyCategoryIds\": [],\n  \"rewardScope\": \"ALL\",\n  \"rewardProductIds\": [],\n  \"rewardCategoryIds\": [],\n  \"minPurchase\": 25000,\n  \"channel\": \"POS\",\n  \"visibility\": \"ALL_OUTLET\",\n  \"outletIds\": [],\n  \"validDays\": [],\n  \"startDate\": \"2026-01-01T00:00:00\",\n  \"endDate\": \"2026-12-31T23:59:59\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Promotion",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/promotion/delete/{{promotion_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "promotion",
+                "delete",
+                "{{promotion_id}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Merchant Role Permission",
+      "item": [
+        {
+          "name": "List Merchant Permission Overrides",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/merchant-role-permission/merchant/{{merchant_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "merchant-role-permission",
+                "merchant",
+                "{{merchant_id}}"
+              ]
+            },
+            "description": "Returns empty PSGS/default override list; POS no longer stores local merchant_role_permissions."
+          },
+          "response": []
+        },
+        {
+          "name": "List Merchant Permission Overrides By Role",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/merchant-role-permission/merchant/{{merchant_id}}/role/{{role_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "merchant-role-permission",
+                "merchant",
+                "{{merchant_id}}",
+                "role",
+                "{{role_id}}"
+              ]
+            },
+            "description": "Returns empty PSGS/default override list."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Effective Permissions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/merchant-role-permission/merchant/{{merchant_id}}/role/{{role_id}}/effective",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "merchant-role-permission",
+                "merchant",
+                "{{merchant_id}}",
+                "role",
+                "{{role_id}}",
+                "effective"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "Set Override (Unsupported)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/merchant-role-permission/merchant/{{merchant_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "merchant-role-permission",
+                "merchant",
+                "{{merchant_id}}"
+              ]
+            },
+            "description": "Unsupported after PSGS migration; service rejects writes to POS merchant_role_permissions.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roleId\": {{role_id}},\n  \"permissionId\": {{permission_id}},\n  \"isGranted\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Override (Unsupported)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/merchant-role-permission/{{merchant_role_permission_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "merchant-role-permission",
+                "{{merchant_role_permission_id}}"
+              ]
+            },
+            "description": "Unsupported after PSGS migration."
+          },
+          "response": []
+        },
+        {
+          "name": "Reset Role Overrides (Unsupported)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{pos_base_url}}/pos/merchant-role-permission/merchant/{{merchant_id}}/role/{{role_id}}",
+              "host": [
+                "{{pos_base_url}}"
+              ],
+              "path": [
+                "pos",
+                "merchant-role-permission",
+                "merchant",
+                "{{merchant_id}}",
+                "role",
+                "{{role_id}}"
+              ]
+            },
+            "description": "Unsupported after PSGS migration."
+          },
+          "response": []
         }
       ]
     },
@@ -1433,72 +1679,12 @@
               "path": [
                 "pos",
                 "summary-report",
-                "list"
-              ],
-              "query": [
-                {
-                  "key": "startDate",
-                  "value": "2026-01-01",
-                  "description": "Tanggal mulai (required, format: yyyy-MM-dd)"
-                },
-                {
-                  "key": "endDate",
-                  "value": "2026-12-31",
-                  "description": "Tanggal akhir (required, format: yyyy-MM-dd)"
-                }
+                "list?startDate=2026-01-01&endDate=2026-12-31"
               ]
             },
-            "description": "Ambil ringkasan laporan penjualan per produk dan per metode pembayaran dalam rentang tanggal."
+            "description": ""
           },
-          "response": [
-            {
-              "name": "Summary Report Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"OK\",\n  \"data\": {\n    \"productList\": [\n      {\n        \"productName\": \"Kopi Susu\",\n        \"totalSaleItems\": 150\n      }\n    ],\n    \"paymentListInternal\": [\n      {\n        \"paymentName\": \"Cash\",\n        \"totalTransactions\": 80,\n        \"totalAmountTransactions\": 4000000.0\n      }\n    ],\n    \"paymentListExternal\": [\n      {\n        \"paymentName\": \"QRIS\",\n        \"totalTransactions\": 70,\n        \"totalAmountTransactions\": 3500000.0\n      }\n    ]\n  }\n}"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "Upload",
-      "item": [
-        {
-          "name": "Upload Image",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file",
-                  "type": "file",
-                  "description": "File gambar yang akan diupload (JPG, PNG, dll)"
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{upload_base_url}}/images/upload",
-              "host": [
-                "{{upload_base_url}}"
-              ],
-              "path": [
-                "images",
-                "upload"
-              ]
-            },
-            "description": "Upload gambar produk/kategori. Response berisi URL full dan URL thumbnail. Timeout: connect 30s, read/write 120s (2 menit)."
-          },
-          "response": [
-            {
-              "name": "Upload Image Success",
-              "status": "OK",
-              "code": 200,
-              "body": "{\n  \"status\": \"SUCCESS\",\n  \"message\": \"Image uploaded successfully\",\n  \"data\": {\n    \"urlFull\": \"https://virellon.cashup.id/images/product/sample.jpg\",\n    \"urlThumb\": \"https://virellon.cashup.id/images/product/sample_thumb.jpg\"\n  }\n}"
-            }
-          ]
+          "response": []
         }
       ]
     }

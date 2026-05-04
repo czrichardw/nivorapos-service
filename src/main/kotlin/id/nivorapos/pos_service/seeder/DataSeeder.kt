@@ -2,11 +2,11 @@ package id.nivorapos.pos_service.seeder
 
 import id.nivorapos.pos_service.entity.*
 import id.nivorapos.pos_service.repository.*
+import id.nivorapos.pos_service.service.PsgsCredentialService
 import org.slf4j.LoggerFactory
 import org.springframework.boot.ApplicationArguments
 import org.springframework.boot.ApplicationRunner
 import org.springframework.context.annotation.Profile
-import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
@@ -15,21 +15,12 @@ import java.time.LocalDateTime
 @Component
 @Profile("seeder")
 class DataSeeder(
-    private val companyGroupRepository: CompanyGroupRepository,
-    private val companyRepository: CompanyRepository,
-    private val areaRepository: AreaRepository,
-    private val merchantRepository: MerchantRepository,
-    private val outletRepository: OutletRepository,
-    private val userRepository: UserRepository,
-    private val userDetailRepository: UserDetailRepository,
     private val roleRepository: RoleRepository,
     private val permissionRepository: PermissionRepository,
     private val rolePermissionRepository: RolePermissionRepository,
-    private val userRoleRepository: UserRoleRepository,
     private val categoryRepository: CategoryRepository,
     private val productRepository: ProductRepository,
     private val productCategoryRepository: ProductCategoryRepository,
-    private val productImageRepository: ProductImageRepository,
     private val productOutletRepository: ProductOutletRepository,
     private val stockRepository: StockRepository,
     private val taxRepository: TaxRepository,
@@ -37,7 +28,7 @@ class DataSeeder(
     private val merchantPaymentMethodRepository: MerchantPaymentMethodRepository,
     private val paymentSettingRepository: PaymentSettingRepository,
     private val globalParameterRepository: GlobalParameterRepository,
-    private val passwordEncoder: PasswordEncoder
+    private val psgsCredentialService: PsgsCredentialService
 ) : ApplicationRunner {
 
     private val log = LoggerFactory.getLogger(DataSeeder::class.java)
@@ -49,148 +40,37 @@ class DataSeeder(
     override fun run(args: ApplicationArguments) {
         log.info("=== Starting Data Seeder ===")
 
-        val companyGroup = seedCompanyGroup()
-        val company = seedCompany(companyGroup)
-        val area = seedArea(company)
-        val merchant = seedMerchant(area)
-        val outlets = seedOutlets(merchant)
+        val merchantId = seedMerchantId
+        val merchantUniqueCode = resolveSeedMerchantUniqueCode(merchantId)
+        val outletIds = resolveSeedOutletIds(merchantId)
         seedPermissions()
         val roles = seedRoles()
         seedRolePermissions(roles)
-        val users = seedUsers(merchant)
-        seedUserRoles(users, roles)
-        seedUserDetails(users, merchant)
-        seedTax(merchant)
+        seedTax(merchantId)
         seedPaymentMethods()
-        seedMerchantPaymentMethods(merchant)
-        seedPaymentSetting(merchant)
-        val categories = seedCategories(merchant)
-        val products = seedProducts(merchant)
+        seedMerchantPaymentMethods(merchantId)
+        seedPaymentSetting(merchantId)
+        val categories = seedCategories(merchantId)
+        val products = seedProducts(merchantId, merchantUniqueCode)
         seedProductCategories(products, categories)
-        seedProductImages(products)
-        seedProductOutlets(products, outlets)
+        seedProductOutlets(products, outletIds)
         seedStock(products)
         seedGlobalParameters()
 
         log.info("=== Data Seeder Completed ===")
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Company Group
-    // ─────────────────────────────────────────────────────────────
-    private fun seedCompanyGroup(): CompanyGroup {
-        if (companyGroupRepository.existsByCode("GRP-001")) {
-            log.info("[SKIP] CompanyGroup GRP-001 already exists")
-            return companyGroupRepository.findAll().first { it.code == "GRP-001" }
-        }
-        val entity = CompanyGroup(
-            code = "GRP-001",
-            name = "Nivora Group",
-            description = "Induk perusahaan Nivora",
-            isActive = true,
-            isSystem = true,
-            createdBy = seederUser,
-            createdDate = now
-        )
-        return companyGroupRepository.save(entity).also { log.info("[SEED] CompanyGroup: ${it.name}") }
+    private fun resolveSeedMerchantUniqueCode(merchantId: Long): String? {
+        val merchant = runCatching { psgsCredentialService.findMerchant(merchantId) }.getOrNull()
+        return merchant?.merchantUniqueCode ?: merchant?.let { "PSGS-$merchantId" }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // Company
-    // ─────────────────────────────────────────────────────────────
-    private fun seedCompany(group: CompanyGroup): Company {
-        if (companyRepository.existsByCode("CMP-001")) {
-            log.info("[SKIP] Company CMP-001 already exists")
-            return companyRepository.findAll().first { it.code == "CMP-001" }
-        }
-        val entity = Company(
-            groupId = group.id,
-            code = "CMP-001",
-            name = "PT Nivora Teknologi",
-            isActive = true,
-            isSystem = false,
-            createdBy = seederUser,
-            createdDate = now
-        )
-        return companyRepository.save(entity).also { log.info("[SEED] Company: ${it.name}") }
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // Area
-    // ─────────────────────────────────────────────────────────────
-    private fun seedArea(company: Company): Area {
-        if (areaRepository.existsByCode("AREA-JKT")) {
-            log.info("[SKIP] Area AREA-JKT already exists")
-            return areaRepository.findAll().first { it.code == "AREA-JKT" }
-        }
-        val entity = Area(
-            companyId = company.id,
-            code = "AREA-JKT",
-            name = "Jakarta",
-            description = "Wilayah DKI Jakarta",
-            isActive = true,
-            isSystem = false,
-            createdBy = seederUser,
-            createdDate = now
-        )
-        return areaRepository.save(entity).also { log.info("[SEED] Area: ${it.name}") }
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // Merchant
-    // ─────────────────────────────────────────────────────────────
-    private fun seedMerchant(area: Area): Merchant {
-        val existingList = merchantRepository.findAll()
-        if (existingList.isNotEmpty()) {
-            log.info("[SKIP] Merchant already exists")
-            return existingList.first()
-        }
-        val entity = Merchant(
-            id = seedMerchantId,
-            areaId = area.id,
-            merchantName = "Kafe Nivora",
-            name = "Kafe Nivora",
-            code = "MRC-001",
-            merchantUniqueCode = "NIVORA-001",
-            isActive = true,
-            description = "Kafe modern berbasis teknologi Nivora POS",
-            address = "Jl. Sudirman No. 88, Jakarta Selatan",
-            phone = "021-12345678",
-            email = "info@kafenivora.com",
-            createdBy = seederUser,
-            createdDate = now
-        )
-        return merchantRepository.save(entity).also { log.info("[SEED] Merchant: ${it.name}") }
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // Outlets
-    // ─────────────────────────────────────────────────────────────
-    private fun seedOutlets(merchant: Merchant): List<Outlet> {
-        val existing = outletRepository.findAll().filter { it.merchantId == merchant.id }
-        if (existing.isNotEmpty()) {
-            log.info("[SKIP] Outlets already exist for merchant ${merchant.id}")
-            return existing
-        }
-        val outletData = listOf(
-            Triple("OUT-001", "Outlet Pusat", true),
-            Triple("OUT-002", "Outlet Cabang Barat", false)
-        )
-        return outletData.map { (code, name, isDefault) ->
-            outletRepository.save(
-                Outlet(
-                    merchantId = merchant.id,
-                    code = code,
-                    name = name,
-                    address = "Jl. Sudirman No. 88, Jakarta Selatan",
-                    phone = "021-12345678",
-                    isDefault = isDefault,
-                    isActive = true,
-                    createdBy = seederUser,
-                    createdDate = now
-                )
-            ).also { log.info("[SEED] Outlet: ${it.name}") }
-        }
+    private fun resolveSeedOutletIds(merchantId: Long): List<Long> {
+        return runCatching { psgsCredentialService.findOutletsByMerchantId(merchantId).map { it.id } }
+            .getOrElse {
+                log.warn("[SEED] PSGS outlet lookup failed for merchant $merchantId: ${it.message}")
+                emptyList()
+            }
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -304,102 +184,12 @@ class DataSeeder(
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Users
-    // ─────────────────────────────────────────────────────────────
-    private fun seedUsers(merchant: Merchant): Map<String, User> {
-        data class UserData(
-            val username: String, val fullName: String,
-            val email: String, val employeeCode: String,
-            val rawPassword: String, val isSystem: Boolean
-        )
-
-        val userData = listOf(
-            UserData("admin",      "Administrator",  "admin@kafenivora.com",      "EMP-001", "Admin@123",   true),
-            UserData("cashier",    "Kasir Utama",    "kasir@kafenivora.com",      "EMP-002", "Cashier@123", false),
-            UserData("manager",    "Manajer Outlet", "manager@kafenivora.com",    "EMP-003", "Manager@123", false),
-            UserData("ittest02",   "Kasir IT Test",   "ittest02@kafenivora.com",   "EMP-004", "123456", false),
-            UserData("merchantam1", "Kasir Merchant 1", "merchantam1@kafenivora.com", "EMP-005", "123456", false)
-        )
-
-        return userData.associate { u ->
-            u.username to if (userRepository.existsByUsername(u.username)) {
-                log.info("[SKIP] User ${u.username} already exists")
-                userRepository.findByUsername(u.username).get()
-            } else {
-                userRepository.save(
-                    User(
-                        username = u.username,
-                        fullName = u.fullName,
-                        email = u.email,
-                        employeeCode = u.employeeCode,
-                        password = passwordEncoder.encode(u.rawPassword)!!,
-                        isActive = true,
-                        isSystem = u.isSystem,
-                        createdBy = seederUser,
-                        createdDate = now
-                    )
-                ).also { log.info("[SEED] User: ${it.username} / password: ${u.rawPassword}") }
-            }
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // User Roles
-    // ─────────────────────────────────────────────────────────────
-    private fun seedUserRoles(users: Map<String, User>, roles: Map<String, Role>) {
-        mapOf(
-            "admin"    to "ADMIN",
-            "cashier"  to "CASHIER",
-            "manager"  to "MANAGER",
-            "ittest02"    to "CASHIER",
-            "merchantam1" to "CASHIER"
-        ).forEach { (username, roleCode) ->
-            val user = users[username] ?: return@forEach
-            val role = roles[roleCode] ?: return@forEach
-            if (!userRoleRepository.existsByUserIdAndRoleId(user.id, role.id)) {
-                userRoleRepository.save(
-                    UserRole(
-                        userId = user.id,
-                        roleId = role.id,
-                        scopeLevel = "MERCHANT",
-                        applicationType = "POS",
-                        createdBy = seederUser,
-                        createdDate = now
-                    )
-                )
-                log.info("[SEED] UserRole: ${user.username} -> ${role.code}")
-            }
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // User Details
-    // ─────────────────────────────────────────────────────────────
-    private fun seedUserDetails(users: Map<String, User>, merchant: Merchant) {
-        users.forEach { (_, user) ->
-            if (!userDetailRepository.existsByUsername(user.username)) {
-                userDetailRepository.save(
-                    UserDetail(
-                        merchantId = merchant.id,
-                        username = user.username,
-                        createdBy = seederUser,
-                        createdDate = now
-                    )
-                )
-                log.info("[SEED] UserDetail: ${user.username} -> merchant ${merchant.id}")
-            } else {
-                log.info("[SKIP] UserDetail for ${user.username} already exists")
-            }
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────
     // Tax
     // ─────────────────────────────────────────────────────────────
-    private fun seedTax(merchant: Merchant): List<Tax> {
-        val existing = taxRepository.findAll().filter { it.merchantId == merchant.id }
+    private fun seedTax(merchantId: Long): List<Tax> {
+        val existing = taxRepository.findAll().filter { it.merchantId == merchantId }
         if (existing.isNotEmpty()) {
-            log.info("[SKIP] Tax already exists for merchant ${merchant.id}")
+            log.info("[SKIP] Tax already exists for merchant $merchantId")
             return existing
         }
         val taxes = listOf(
@@ -409,7 +199,7 @@ class DataSeeder(
         return taxes.map { (name, pct, isDefault) ->
             taxRepository.save(
                 Tax(
-                    merchantId = merchant.id,
+                    merchantId = merchantId,
                     name = name,
                     percentage = pct,
                     isActive = true,
@@ -461,10 +251,10 @@ class DataSeeder(
         }
     }
 
-    private fun seedMerchantPaymentMethods(merchant: Merchant) {
+    private fun seedMerchantPaymentMethods(merchantId: Long) {
         val allPM = paymentMethodRepository.findAll()
         val existingMPM = merchantPaymentMethodRepository.findAll()
-            .filter { it.merchantId == merchant.id }
+            .filter { it.merchantId == merchantId }
             .map { it.paymentMethodId }
             .toSet()
 
@@ -472,7 +262,7 @@ class DataSeeder(
             if (pm.id !in existingMPM) {
                 merchantPaymentMethodRepository.save(
                     MerchantPaymentMethod(
-                        merchantId = merchant.id,
+                        merchantId = merchantId,
                         paymentMethodId = pm.id,
                         isEnabled = true,
                         displayOrder = index + 1,
@@ -480,21 +270,21 @@ class DataSeeder(
                         updatedAt = now
                     )
                 )
-                log.info("[SEED] MerchantPaymentMethod: merchant ${merchant.id} -> ${pm.code}")
+                log.info("[SEED] MerchantPaymentMethod: merchant $merchantId -> ${pm.code}")
             } else {
                 log.info("[SKIP] MerchantPaymentMethod ${pm.code} already linked to merchant")
             }
         }
     }
 
-    private fun seedPaymentSetting(merchant: Merchant) {
-        if (paymentSettingRepository.findByMerchantId(merchant.id).isPresent) {
-            log.info("[SKIP] PaymentSetting already exists for merchant ${merchant.id}")
+    private fun seedPaymentSetting(merchantId: Long) {
+        if (paymentSettingRepository.findByMerchantId(merchantId).isPresent) {
+            log.info("[SKIP] PaymentSetting already exists for merchant $merchantId")
             return
         }
         paymentSettingRepository.save(
             PaymentSetting(
-                merchantId = merchant.id,
+                merchantId = merchantId,
                 isPriceIncludeTax = false,
                 isRounding = false,
                 roundingTarget = 0,
@@ -502,24 +292,20 @@ class DataSeeder(
                 isServiceCharge = false,
                 serviceChargePercentage = BigDecimal.ZERO,
                 serviceChargeAmount = BigDecimal.ZERO,
-                isTax = true,
-                taxPercentage = BigDecimal("11.00"),
-                taxName = "PPN",
-                taxMode = "EXCLUSIVE",
                 createdBy = seederUser,
                 createdDate = now
             )
         )
-        log.info("[SEED] PaymentSetting for merchant ${merchant.id}")
+        log.info("[SEED] PaymentSetting for merchant $merchantId")
     }
 
     // ─────────────────────────────────────────────────────────────
     // Categories
     // ─────────────────────────────────────────────────────────────
-    private fun seedCategories(merchant: Merchant): List<Category> {
-        val existing = categoryRepository.findAll().filter { it.merchantId == merchant.id }
+    private fun seedCategories(merchantId: Long): List<Category> {
+        val existing = categoryRepository.findAll().filter { it.merchantId == merchantId }
         if (existing.isNotEmpty()) {
-            log.info("[SKIP] Categories already exist for merchant ${merchant.id}")
+            log.info("[SKIP] Categories already exist for merchant $merchantId")
             return existing
         }
         val catData = listOf(
@@ -532,7 +318,7 @@ class DataSeeder(
         return catData.map { (name, desc) ->
             categoryRepository.save(
                 Category(
-                    merchantId = merchant.id,
+                    merchantId = merchantId,
                     name = name,
                     description = desc,
                     createdBy = seederUser,
@@ -545,11 +331,11 @@ class DataSeeder(
     // ─────────────────────────────────────────────────────────────
     // Products
     // ─────────────────────────────────────────────────────────────
-    private fun seedProducts(merchant: Merchant): List<Product> {
+    private fun seedProducts(merchantId: Long, merchantUniqueCode: String?): List<Product> {
         val existing = productRepository.findAll()
-            .filter { it.merchantId == merchant.id && it.deletedDate == null }
+            .filter { it.merchantId == merchantId && it.deletedDate == null }
         if (existing.isNotEmpty()) {
-            log.info("[SKIP] Products already exist for merchant ${merchant.id}")
+            log.info("[SKIP] Products already exist for merchant $merchantId")
             return existing
         }
 
@@ -575,8 +361,8 @@ class DataSeeder(
         return products.map { p ->
             productRepository.save(
                 Product(
-                    merchantId = merchant.id,
-                    merchantUniqueCode = merchant.merchantUniqueCode,
+                    merchantId = merchantId,
+                    merchantUniqueCode = merchantUniqueCode,
                     name = p.name,
                     basePrice = BigDecimal(p.basePrice),
                     sku = p.sku,
@@ -630,40 +416,20 @@ class DataSeeder(
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Product Images
-    // ─────────────────────────────────────────────────────────────
-    private fun seedProductImages(products: List<Product>) {
-        if (productImageRepository.count() > 0) {
-            log.info("[SKIP] ProductImages already exist")
-            return
-        }
-        products.forEachIndexed { idx, product ->
-            val padded = (idx + 1).toString().padStart(3, '0')
-            productImageRepository.save(
-                ProductImage(
-                    productId = product.id,
-                    filename = "product_$padded.jpg",
-                    ext = "jpg",
-                    isMain = true,
-                    createdBy = seederUser,
-                    createdDate = now
-                )
-            )
-            log.info("[SEED] ProductImage: ${product.name}")
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────
     // Product Outlets
     // ─────────────────────────────────────────────────────────────
-    private fun seedProductOutlets(products: List<Product>, outlets: List<Outlet>) {
+    private fun seedProductOutlets(products: List<Product>, outletIds: List<Long>) {
+        if (outletIds.isEmpty()) {
+            log.info("[SKIP] ProductOutlet skipped because PSGS returned no outlets for seed merchant $seedMerchantId")
+            return
+        }
         products.forEach { product ->
-            outlets.forEach { outlet ->
-                if (!productOutletRepository.existsByProductIdAndOutletId(product.id, outlet.id)) {
+            outletIds.forEach { outletId ->
+                if (!productOutletRepository.existsByProductIdAndOutletId(product.id, outletId)) {
                     productOutletRepository.save(
                         ProductOutlet(
                             productId = product.id,
-                            outletId = outlet.id,
+                            outletId = outletId,
                             outletPrice = product.basePrice,
                             stockQty = 100,
                             isVisible = true,
@@ -672,9 +438,9 @@ class DataSeeder(
                             createdDate = now
                         )
                     )
-                    log.info("[SEED] ProductOutlet: ${product.name} -> ${outlet.name}")
+                    log.info("[SEED] ProductOutlet: ${product.name} -> outlet $outletId")
                 } else {
-                    log.info("[SKIP] ProductOutlet ${product.name} -> ${outlet.name} already exists")
+                    log.info("[SKIP] ProductOutlet ${product.name} -> outlet $outletId already exists")
                 }
             }
         }

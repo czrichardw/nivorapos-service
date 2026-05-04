@@ -1,8 +1,7 @@
 package id.nivorapos.pos_service.security
 
-import id.nivorapos.pos_service.service.PsgsCachedAuth
 import id.nivorapos.pos_service.service.PsgsCredentialService
-import id.nivorapos.pos_service.service.PsgsPosProvisioningService
+import id.nivorapos.pos_service.service.PsgsCachedAuth
 import id.nivorapos.pos_service.service.PsgsTokenAuthCacheService
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
@@ -20,21 +19,11 @@ import org.springframework.web.filter.OncePerRequestFilter
 class JwtAuthenticationFilter(
     private val jwtUtil: JwtUtil,
     private val psgsCredentialService: PsgsCredentialService,
-    private val psgsPosProvisioningService: PsgsPosProvisioningService,
-    private val userDetailsService: UserDetailsServiceImpl,
     private val permissionResolver: PermissionResolver,
     private val psgsTokenAuthCacheService: PsgsTokenAuthCacheService
 ) : OncePerRequestFilter() {
 
     private val log = LoggerFactory.getLogger(JwtAuthenticationFilter::class.java)
-
-    companion object {
-        private val PSGS_DEFAULT_AUTHORITIES = listOf(
-            "PRODUCT_VIEW", "CATEGORY_VIEW", "STOCK_VIEW",
-            "TRANSACTION_VIEW", "TRANSACTION_CREATE", "TRANSACTION_UPDATE",
-            "REPORT_VIEW", "PAYMENT_SETTING"
-        )
-    }
 
     override fun doFilterInternal(
         request: HttpServletRequest,
@@ -65,13 +54,12 @@ class JwtAuthenticationFilter(
             val username = jwtUtil.extractUsername(token)
 
             if (username.isNotBlank()) {
-                val userDetails = userDetailsService.loadUserByUsername(username)
-
                 if (jwtUtil.validateToken(token, username)) {
                     val merchantId = jwtUtil.extractMerchantId(token)
                     val authorities = permissionResolver.resolve(username, merchantId)
+                    val principal = User(username, "", authorities)
 
-                    val authToken = UsernamePasswordAuthenticationToken(userDetails, null, authorities)
+                    val authToken = UsernamePasswordAuthenticationToken(principal, null, authorities)
                     authToken.details = WebAuthenticationDetailsSource().buildDetails(request).let {
                         mapOf("merchantId" to merchantId, "webDetails" to it)
                     }
@@ -132,32 +120,31 @@ class JwtAuthenticationFilter(
                 return
             }
 
-            val provisioningStart = System.nanoTime()
-            val provisioned = psgsPosProvisioningService.provision(credential)
             val merchantId = credential.merchant.id
-            log.info("[AUTH] $uri — credential resolved and provisioned: username='${session.username}' merchantId=$merchantId merchantName='${provisioned.merchant.name}' provisioning=${elapsedMs(provisioningStart)}ms")
+            val merchantName = credential.merchant.dba?.takeIf { it.isNotBlank() } ?: credential.merchant.name
+            log.info("[AUTH] $uri — credential resolved from midware_master: username='${session.username}' merchantId=$merchantId merchantName='$merchantName'")
             val authorityCodes = permissionResolver.resolve(session.username, merchantId)
                 .map { it.authority }
-                .ifEmpty { PSGS_DEFAULT_AUTHORITIES }
+                .ifEmpty { PsgsAuthorityService.DEFAULT_POS_AUTHORITIES }
 
-            val cached = PsgsCachedAuth(
+            val auth = PsgsCachedAuth(
                 username = session.username,
                 merchantId = merchantId,
-                merchantName = provisioned.merchant.name ?: credential.merchant.name,
+                merchantName = merchantName,
                 hitFrom = session.hitFrom,
                 sessionUpdateAt = session.updateAt,
                 authorities = authorityCodes,
                 expiresAt = psgsTokenAuthCacheService.expiresAt(token)
             )
-            authenticatePsgs(cached, request)
+            authenticatePsgs(auth, request)
 
             val upsertStart = System.nanoTime()
             psgsTokenAuthCacheService.upsert(
                 tokenHash = tokenHash,
-                auth = cached,
+                auth = auth,
                 metadata = """{"source":"psgs_mysql_fallback"}"""
             )
-            log.info("[AUTH-CACHE] $uri — UPSERT username='${session.username}' merchantId=$merchantId expiresAt=${cached.expiresAt} duration=${elapsedMs(upsertStart)}ms")
+            log.info("[AUTH-CACHE] $uri — UPSERT username='${session.username}' merchantId=$merchantId expiresAt=${auth.expiresAt} duration=${elapsedMs(upsertStart)}ms")
             log.info("[AUTH] $uri — PSGS authentication SUCCESS for username='${session.username}' merchantId=$merchantId")
         } catch (e: Exception) {
             log.error("[AUTH] $uri — PSGS session authentication threw an exception: ${e.javaClass.simpleName}: ${e.message}", e)

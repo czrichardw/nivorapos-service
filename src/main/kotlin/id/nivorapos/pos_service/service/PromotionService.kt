@@ -21,7 +21,8 @@ class PromotionService(
     private val promotionBuyCategoryRepository: PromotionBuyCategoryRepository,
     private val promotionRewardProductRepository: PromotionRewardProductRepository,
     private val promotionRewardCategoryRepository: PromotionRewardCategoryRepository,
-    private val promotionOutletRepository: PromotionOutletRepository
+    private val promotionOutletRepository: PromotionOutletRepository,
+    private val psgsCredentialService: PsgsCredentialService
 ) {
 
     fun list(): ApiResponse<List<PromotionResponse>> {
@@ -58,7 +59,7 @@ class PromotionService(
         val username = SecurityUtils.getUsernameFromContext()
         val now = LocalDateTime.now()
 
-        validate(request)
+        validate(request, merchantId)
 
         val promo = Promotion(
             merchantId = merchantId,
@@ -100,7 +101,7 @@ class PromotionService(
         val promo = promotionRepository.findByIdAndMerchantIdAndDeletedDateIsNull(id, merchantId)
             .orElseThrow { RuntimeException("Promosi tidak ditemukan") }
 
-        validate(request)
+        validate(request, merchantId)
 
         promo.name = request.name
         promo.promoType = request.promoType.uppercase()
@@ -357,7 +358,7 @@ class PromotionService(
         }
     }
 
-    private fun validate(request: PromotionRequest) {
+    private fun validate(request: PromotionRequest, merchantId: Long) {
         require(request.name.isNotBlank()) { "name wajib diisi" }
         require(request.promoType.uppercase() in listOf("DISCOUNT_BY_ORDER", "BUY_X_GET_Y", "DISCOUNT_BY_ITEM_SUBTOTAL")) {
             "promoType harus DISCOUNT_BY_ORDER, BUY_X_GET_Y, atau DISCOUNT_BY_ITEM_SUBTOTAL"
@@ -367,6 +368,7 @@ class PromotionService(
         require(request.visibility.uppercase() in listOf("ALL_OUTLET", "SPECIFIC_OUTLET")) { "visibility tidak valid" }
         if (request.visibility.uppercase() == "SPECIFIC_OUTLET") {
             require(request.outletIds.isNotEmpty()) { "outletIds wajib diisi untuk visibility=SPECIFIC_OUTLET" }
+            validatePsgsOutletIds(request.outletIds, merchantId)
         }
 
         when (request.promoType.uppercase()) {
@@ -439,6 +441,14 @@ class PromotionService(
                 promotionOutletRepository.save(PromotionOutlet(promotionId = promotionId, outletId = it))
             }
         }
+    }
+
+    private fun validatePsgsOutletIds(outletIds: List<Long>, merchantId: Long) {
+        val psgsOutletIds = psgsCredentialService.findOutletsByMerchantId(merchantId)
+            .map { it.id }
+            .toSet()
+        val missing = outletIds.toSet() - psgsOutletIds
+        require(missing.isEmpty()) { "Outlet tidak ditemukan di midware_master.merchant_outlets: ${missing.joinToString(",")}" }
     }
 
     private fun clearBindings(promotionId: Long) {

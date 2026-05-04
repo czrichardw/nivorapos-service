@@ -147,6 +147,52 @@ class PsgsCredentialService(
         }
     }
 
+    fun findUser(login: String): PsgsUser? {
+        if (!isEnabled()) return null
+        validateSchemaName(masterSchema)
+        connection().use { conn ->
+            return findMobileAppUsersByLogin(conn, login).ifEmpty {
+                findUsersByLogin(conn, login)
+            }.firstOrNull {
+                it.enabled != false && it.deletedAt == null && it.merchantId != null
+            }
+        }
+    }
+
+    fun findOutletsByMerchantId(merchantId: Long): List<PsgsOutlet> {
+        if (!isEnabled()) return emptyList()
+        validateSchemaName(masterSchema)
+        connection().use { conn ->
+            val sql = """
+                select id, merchant_id, name, street, phone
+                from $masterSchema.merchant_outlets
+                where merchant_id = ?
+                order by id asc
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use { stmt ->
+                stmt.setLong(1, merchantId)
+                stmt.executeQuery().use { rs -> return rs.toPsgsOutlets() }
+            }
+        }
+    }
+
+    fun findUserGroups(): List<PsgsUserGroup> {
+        if (!isEnabled()) return emptyList()
+        validateSchemaName(masterSchema)
+        connection().use { conn ->
+            val sql = """
+                select id, name, roles
+                from $masterSchema.user_group
+                order by id asc
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use { stmt ->
+                stmt.executeQuery().use { rs -> return rs.toPsgsUserGroups() }
+            }
+        }
+    }
+
     private fun connection(): Connection = psgsDataSource?.connection
         ?: throw IllegalStateException("PSGS datasource not initialized")
 
@@ -303,6 +349,36 @@ class PsgsCredentialService(
         )
     }
 
+    private fun ResultSet.toPsgsOutlets(): List<PsgsOutlet> {
+        val outlets = mutableListOf<PsgsOutlet>()
+        while (next()) {
+            outlets.add(
+                PsgsOutlet(
+                    id = getLong("id"),
+                    merchantId = getLong("merchant_id"),
+                    name = getString("name"),
+                    address = getString("street"),
+                    phone = getString("phone")
+                )
+            )
+        }
+        return outlets
+    }
+
+    private fun ResultSet.toPsgsUserGroups(): List<PsgsUserGroup> {
+        val groups = mutableListOf<PsgsUserGroup>()
+        while (next()) {
+            groups.add(
+                PsgsUserGroup(
+                    id = getLong("id"),
+                    name = getString("name"),
+                    roles = getString("roles")
+                )
+            )
+        }
+        return groups
+    }
+
     private fun ResultSet.getNullableLong(column: String): Long? {
         val value = getLong(column)
         return if (wasNull()) null else value
@@ -377,6 +453,20 @@ data class PsgsMerchant(
     val email: String?,
     val isPosEnabled: Boolean?,
     val deletedAt: String?
+)
+
+data class PsgsOutlet(
+    val id: Long,
+    val merchantId: Long,
+    val name: String?,
+    val address: String?,
+    val phone: String?
+)
+
+data class PsgsUserGroup(
+    val id: Long,
+    val name: String,
+    val roles: String
 )
 
 data class PsgsMobileAppUserSession(

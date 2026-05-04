@@ -11,9 +11,5 @@ data class PaymentSettingRequest(
     val serviceChargePercentage: BigDecimal = BigDecimal.ZERO,
     val serviceChargeAmount: BigDecimal = BigDecimal.ZERO,
     /** BEFORE_TAX | AFTER_TAX | DPP | AFTER_DISCOUNT */
-    val serviceChargeSource: String? = null,
-    val isTax: Boolean = false,
-    val taxPercentage: BigDecimal = BigDecimal.ZERO,
-    val taxName: String? = null,
-    val taxMode: String? = null
+    val serviceChargeSource: String? = null
 )
