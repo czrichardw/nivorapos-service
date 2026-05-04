@@ -43,6 +43,7 @@ class RequestResponseLoggingFilter(
 
         MDC.put(MDC_KEY, requestId)
         response.setHeader(REQUEST_ID_HEADER, requestId)
+        PsgsJdbcQueryMetrics.beginRequest()
 
         val requestForChain = if (bodyLoggingEnabled) {
             ContentCachingRequestWrapper(request, maxBodyLogBytes.coerceAtLeast(0))
@@ -91,10 +92,20 @@ class RequestResponseLoggingFilter(
                 val queries = statistics.queryExecutionCount - queriesBefore
                 val maxQueryAfter = statistics.queryExecutionMaxTime
                 val slowest = if (maxQueryAfter > maxQueryBefore) maxQueryAfter else 0L
-                "  Stmts: $prepared | Queries: $queries | Slowest query: ${slowest}ms | Response copy: ${responseCopyDuration}ms"
-            } else if (bodyLoggingEnabled) {
-                "  Response copy: ${responseCopyDuration}ms"
-            } else null
+                buildPerfNote(
+                    hibernateStats = "Stmts: $prepared | Queries: $queries | Slowest query: ${slowest}ms",
+                    psgsStats = PsgsJdbcQueryMetrics.snapshot(),
+                    responseCopyDuration = responseCopyDuration,
+                    includeResponseCopy = true
+                )
+            } else {
+                buildPerfNote(
+                    hibernateStats = null,
+                    psgsStats = PsgsJdbcQueryMetrics.snapshot(),
+                    responseCopyDuration = responseCopyDuration,
+                    includeResponseCopy = bodyLoggingEnabled
+                )
+            }
 
             // Logging happens after the app work is done. Response-body logging
             // is disabled by default because ContentCachingResponseWrapper can
@@ -103,9 +114,25 @@ class RequestResponseLoggingFilter(
                 logRequest(requestForChain, requestId)
                 logResponse(status, responseBodySnapshot, duration, perfNote, requestId)
             } finally {
+                PsgsJdbcQueryMetrics.clear()
                 MDC.remove(MDC_KEY)
             }
         }
+    }
+
+    private fun buildPerfNote(
+        hibernateStats: String?,
+        psgsStats: PsgsJdbcQueryMetrics.Snapshot,
+        responseCopyDuration: Long,
+        includeResponseCopy: Boolean
+    ): String? {
+        val parts = mutableListOf<String>()
+        if (hibernateStats != null) parts += hibernateStats
+        if (psgsStats.hasQueries) {
+            parts += "PSGS Stmts: ${psgsStats.statementCount} | PSGS JDBC: ${psgsStats.totalTimeMs}ms | PSGS Slowest: ${psgsStats.slowestTimeMs}ms"
+        }
+        if (includeResponseCopy) parts += "Response copy: ${responseCopyDuration}ms"
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(separator = " | ", prefix = "  ")
     }
 
     private fun logRequest(request: HttpServletRequest, requestId: String) {

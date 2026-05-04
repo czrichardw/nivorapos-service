@@ -47,7 +47,11 @@ class ProductService(
     ): PagedResponse<ProductResponse> {
         val merchantId = SecurityUtils.getMerchantIdFromContext()
         val direction = if (sortDir?.uppercase() == "ASC") Sort.Direction.ASC else Sort.Direction.DESC
-        val sortField = sortBy ?: "createdDate"
+        val sortField = when (sortBy) {
+            "price", "base_price" -> "basePrice"
+            null -> "createdDate"
+            else -> sortBy
+        }
         val pageable = PageRequest.of(page, size, Sort.by(direction, sortField))
 
         val spec = ProductSpecification.withFilters(
@@ -130,21 +134,11 @@ class ProductService(
         }
         require(request.qty >= 0) { "qty must be greater than or equal to 0" }
 
-        val paymentSetting = paymentSettingRepository.findByMerchantId(merchantId).orElse(null)
         val merchantUniqueCode = resolveMerchantUniqueCode(merchantId)
-        val calculatedPrice = calculateFinalPrice(
-            basePrice = request.basePrice ?: request.price,
-            taxId = request.taxId,
-            isTaxable = request.isTaxable,
-            isTaxEnabled = paymentSetting?.isTax == true,
-            isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true
-        )
-
         val product = Product(
             merchantId = merchantId,
             merchantUniqueCode = merchantUniqueCode,
             name = request.name,
-            price = calculatedPrice,
             productType = productType,
             sku = request.sku,
             upc = request.upc,
@@ -152,7 +146,7 @@ class ProductService(
             imageThumbUrl = request.imageThumbUrl,
             description = request.description,
             stockMode = request.stockMode,
-            basePrice = request.basePrice ?: request.price,
+            basePrice = request.basePrice,
             isTaxable = request.isTaxable,
             taxId = request.taxId,
             isStock = request.isStock,
@@ -209,20 +203,11 @@ class ProductService(
 
         val product = productRepository.findByIdAndDeletedDateIsNull(request.id)
             .orElseThrow { RuntimeException("Product not found") }
-        val paymentSetting = paymentSettingRepository.findByMerchantId(product.merchantId).orElse(null)
         val merchantUniqueCode = resolveMerchantUniqueCode(product.merchantId)
-        val resolvedBasePrice = request.basePrice ?: request.price
-        val calculatedPrice = calculateFinalPrice(
-            basePrice = resolvedBasePrice,
-            taxId = request.taxId,
-            isTaxable = request.isTaxable,
-            isTaxEnabled = paymentSetting?.isTax == true,
-            isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true
-        )
+        val resolvedBasePrice = request.basePrice
 
         product.name = request.name
         product.merchantUniqueCode = merchantUniqueCode
-        product.price = calculatedPrice
         product.sku = request.sku
         product.upc = request.upc
         product.imageUrl = request.imageUrl
@@ -272,21 +257,13 @@ class ProductService(
 
     @Transactional
     fun recalculateMerchantPrices(merchantId: Long) {
-        val paymentSetting = paymentSettingRepository.findByMerchantId(merchantId).orElse(null)
-        val products = productRepository.findByMerchantIdAndDeletedDateIsNull(merchantId)
-
-        products.forEach { product ->
-            val basePrice = product.basePrice ?: product.price
-            product.price = calculateFinalPrice(
-                basePrice = basePrice,
-                taxId = product.taxId,
-                isTaxable = product.isTaxable,
-                isTaxEnabled = paymentSetting?.isTax == true,
-                isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true
-            )
-        }
-
-        productRepository.saveAll(products)
+        productRepository.findByMerchantIdAndDeletedDateIsNull(merchantId)
+            .filter { it.basePrice == null }
+            .takeIf { it.isNotEmpty() }
+            ?.let { products ->
+                products.forEach { it.basePrice = BigDecimal.ZERO }
+                productRepository.saveAll(products)
+            }
     }
 
     // ─── Variant Group (merchant-level) ───────────────────────────────────────
@@ -578,7 +555,14 @@ class ProductService(
         taxesById: Map<Long, id.nivorapos.pos_service.entity.Tax>
     ): ProductResponse {
         val tax = product.taxId?.let { taxesById[it] }
-        val basePrice = product.basePrice ?: product.price
+        val basePrice = resolveBasePrice(product)
+        val finalPrice = calculateFinalPrice(
+            basePrice = basePrice,
+            taxId = product.taxId,
+            isTaxable = product.isTaxable,
+            isTaxEnabled = paymentSetting?.isTax == true,
+            isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true
+        )
 
         val qty = when {
             product.productType == "VARIANT" -> allStocks.sumOf { it.qty }
@@ -624,7 +608,7 @@ class ProductService(
             productType = product.productType, sku = product.sku, upc = product.upc,
             imageUrl = product.imageUrl, imageThumbUrl = product.imageThumbUrl,
             description = product.description, stockMode = product.stockMode,
-            basePrice = basePrice, finalPrice = product.price,
+            basePrice = basePrice, finalPrice = finalPrice,
             isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true,
             qty = qty, isActive = product.isActive, isStock = product.isStock,
             merchantName = merchant?.merchantName ?: merchant?.name,
@@ -661,11 +645,21 @@ class ProductService(
         } else null
     }
 
+    private fun resolveBasePrice(product: Product): BigDecimal =
+        product.basePrice ?: BigDecimal.ZERO
+
     private fun buildProductResponse(product: Product): ProductResponse {
         val paymentSetting = paymentSettingRepository.findByMerchantId(product.merchantId).orElse(null)
         val merchant = merchantRepository.findById(product.merchantId).orElse(null)
         val tax = product.taxId?.let { taxRepository.findById(it).orElse(null) }
-        val basePrice = product.basePrice ?: product.price
+        val basePrice = resolveBasePrice(product)
+        val finalPrice = calculateFinalPrice(
+            basePrice = basePrice,
+            taxId = product.taxId,
+            isTaxable = product.isTaxable,
+            isTaxEnabled = paymentSetting?.isTax == true,
+            isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true
+        )
         val productCategories = productCategoryRepository.findByProductId(product.id)
 
         val qty = when {
@@ -733,7 +727,7 @@ class ProductService(
             description = product.description,
             stockMode = product.stockMode,
             basePrice = basePrice,
-            finalPrice = product.price,
+            finalPrice = finalPrice,
             isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true,
             qty = qty,
             isActive = product.isActive,

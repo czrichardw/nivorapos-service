@@ -2,6 +2,7 @@ package id.nivorapos.pos_service.service
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import id.nivorapos.pos_service.config.PsgsJdbcLoggingDataSource
 import jakarta.annotation.PreDestroy
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.security.crypto.password.PasswordEncoder
@@ -11,6 +12,7 @@ import java.sql.ResultSet
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.Base64
+import javax.sql.DataSource
 
 @Service
 class PsgsCredentialService(
@@ -28,30 +30,46 @@ class PsgsCredentialService(
     private val masterSchema: String,
     @Value("\${psgs.login.require-password:false}")
     private val requireLoginPassword: Boolean,
+    @Value("\${app.psgs-jdbc-log.enabled:false}")
+    private val psgsJdbcLogEnabled: Boolean,
+    @Value("\${app.psgs-jdbc-log.slow-threshold-ms:50}")
+    private val psgsSlowQueryThresholdMs: Long,
     private val passwordEncoder: PasswordEncoder
 ) {
 
     fun isEnabled(): Boolean = integrationEnabled && url.isNotBlank()
 
-    private val psgsDataSource: HikariDataSource? by lazy {
+    private val psgsDataSourceDelegate: Lazy<DataSource?> = lazy {
         if (!isEnabled()) null
-        else HikariDataSource(HikariConfig().apply {
-            jdbcUrl = url
-            username = this@PsgsCredentialService.username
-            password = this@PsgsCredentialService.password
-            driverClassName = this@PsgsCredentialService.driverClassName
-            maximumPoolSize = 5
-            minimumIdle = 1
-            connectionTimeout = 10_000
-            validationTimeout = 5_000
-            idleTimeout = 300_000
-            maxLifetime = 600_000
-        })
+        else {
+            val hikariDataSource = HikariDataSource(HikariConfig().apply {
+                jdbcUrl = url
+                username = this@PsgsCredentialService.username
+                password = this@PsgsCredentialService.password
+                driverClassName = this@PsgsCredentialService.driverClassName
+                maximumPoolSize = 5
+                minimumIdle = 1
+                connectionTimeout = 10_000
+                validationTimeout = 5_000
+                idleTimeout = 300_000
+                maxLifetime = 600_000
+            })
+            if (psgsJdbcLogEnabled) {
+                PsgsJdbcLoggingDataSource(hikariDataSource, psgsSlowQueryThresholdMs.coerceAtLeast(0))
+            } else {
+                hikariDataSource
+            }
+        }
     }
+
+    private val psgsDataSource: DataSource?
+        get() = psgsDataSourceDelegate.value
 
     @PreDestroy
     fun cleanup() {
-        psgsDataSource?.close()
+        if (psgsDataSourceDelegate.isInitialized()) {
+            (psgsDataSourceDelegate.value as? AutoCloseable)?.close()
+        }
     }
 
     fun authenticate(login: String, rawPassword: String): PsgsCredential? {

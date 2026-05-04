@@ -554,22 +554,22 @@ class DataSeeder(
         }
 
         data class ProdData(
-            val name: String, val price: String, val basePrice: String,
+            val name: String, val basePrice: String,
             val sku: String, val upc: String, val desc: String,
             val isTaxable: Boolean, val stockMode: String
         )
 
         val products = listOf(
-            ProdData("Kopi Susu Signature", "32000", "28000", "BVR-001", "8991234000001", "Kopi susu dengan susu segar pilihan",       true,  "TRACK"),
-            ProdData("Americano",           "28000", "24000", "BVR-002", "8991234000002", "Espresso dengan air panas, rasa bold",       true,  "TRACK"),
-            ProdData("Cappuccino",          "35000", "30000", "BVR-003", "8991234000003", "Espresso dengan foam susu lembut",           true,  "TRACK"),
-            ProdData("Es Kopi Susu",        "30000", "26000", "BVR-004", "8991234000004", "Kopi susu segar disajikan dingin",           true,  "TRACK"),
-            ProdData("Matcha Latte",        "38000", "32000", "BVR-005", "8991234000005", "Matcha premium dengan susu segar",           true,  "TRACK"),
-            ProdData("Nasi Goreng Spesial", "45000", "38000", "MKN-001", "8991234000006", "Nasi goreng dengan telur, ayam, dan sosis", true,  "TRACK"),
-            ProdData("Mie Goreng Ayam",     "42000", "35000", "MKN-002", "8991234000007", "Mie goreng dengan topping ayam crispy",     true,  "TRACK"),
-            ProdData("Roti Bakar Coklat",   "25000", "20000", "CML-001", "8991234000008", "Roti bakar dengan selai coklat keju",       true,  "TRACK"),
-            ProdData("Croissant Butter",    "28000", "22000", "CML-002", "8991234000009", "Croissant renyah dengan mentega premium",   true,  "TRACK"),
-            ProdData("Paket Kopi + Roti",   "52000", "45000", "PKT-001", "8991234000010", "Paket hemat: kopi susu + roti bakar",       true,  "NONE")
+            ProdData("Kopi Susu Signature", "28000", "BVR-001", "8991234000001", "Kopi susu dengan susu segar pilihan",       true,  "TRACK"),
+            ProdData("Americano",           "24000", "BVR-002", "8991234000002", "Espresso dengan air panas, rasa bold",       true,  "TRACK"),
+            ProdData("Cappuccino",          "30000", "BVR-003", "8991234000003", "Espresso dengan foam susu lembut",           true,  "TRACK"),
+            ProdData("Es Kopi Susu",        "26000", "BVR-004", "8991234000004", "Kopi susu segar disajikan dingin",           true,  "TRACK"),
+            ProdData("Matcha Latte",        "32000", "BVR-005", "8991234000005", "Matcha premium dengan susu segar",           true,  "TRACK"),
+            ProdData("Nasi Goreng Spesial", "38000", "MKN-001", "8991234000006", "Nasi goreng dengan telur, ayam, dan sosis", true,  "TRACK"),
+            ProdData("Mie Goreng Ayam",     "35000", "MKN-002", "8991234000007", "Mie goreng dengan topping ayam crispy",     true,  "TRACK"),
+            ProdData("Roti Bakar Coklat",   "20000", "CML-001", "8991234000008", "Roti bakar dengan selai coklat keju",       true,  "TRACK"),
+            ProdData("Croissant Butter",    "22000", "CML-002", "8991234000009", "Croissant renyah dengan mentega premium",   true,  "TRACK"),
+            ProdData("Paket Kopi + Roti",   "45000", "PKT-001", "8991234000010", "Paket hemat: kopi susu + roti bakar",       true,  "NONE")
         )
 
         return products.map { p ->
@@ -578,7 +578,6 @@ class DataSeeder(
                     merchantId = merchant.id,
                     merchantUniqueCode = merchant.merchantUniqueCode,
                     name = p.name,
-                    price = BigDecimal(p.price),
                     basePrice = BigDecimal(p.basePrice),
                     sku = p.sku,
                     upc = p.upc,
@@ -665,7 +664,7 @@ class DataSeeder(
                         ProductOutlet(
                             productId = product.id,
                             outletId = outlet.id,
-                            outletPrice = product.price,
+                            outletPrice = product.basePrice,
                             stockQty = 100,
                             isVisible = true,
                             canStandalone = true,
