@@ -88,7 +88,7 @@ class PosMerchantDefaultsService(
         taxRepository.save(
             Tax(
                 merchantId = merchantId,
-                name = "PPN 11%",
+                name = "PPN",
                 percentage = BigDecimal("11.00"),
                 isActive = true,
                 isDefault = true,
@@ -98,6 +98,6 @@ class PosMerchantDefaultsService(
                 modifiedDate = now
             )
         )
-        log.info("[POS-DEFAULTS] Created default tax PPN 11% for merchant $merchantId")
+        log.info("[POS-DEFAULTS] Created default tax PPN 11% for merchant $merchantId with name PPN")
     }
 }

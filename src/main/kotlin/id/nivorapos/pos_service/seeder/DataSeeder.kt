@@ -193,7 +193,7 @@ class DataSeeder(
             return existing
         }
         val taxes = listOf(
-            Triple("PPN 11%", BigDecimal("11.00"), true),
+            Triple("PPN", BigDecimal("11.00"), true),
             Triple("PPN 10%", BigDecimal("10.00"), false)
         )
         return taxes.map { (name, pct, isDefault) ->
