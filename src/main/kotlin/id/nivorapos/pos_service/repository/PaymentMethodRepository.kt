@@ -7,4 +7,5 @@ import org.springframework.stereotype.Repository
 @Repository
 interface PaymentMethodRepository : JpaRepository<PaymentMethod, Long> {
     fun findByIsActiveTrue(): List<PaymentMethod>
+    fun findByCode(code: String): PaymentMethod?
 }

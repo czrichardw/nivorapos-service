@@ -8,4 +8,5 @@ import org.springframework.stereotype.Repository
 interface MerchantPaymentMethodRepository : JpaRepository<MerchantPaymentMethod, Long> {
     fun findByMerchantIdAndIsEnabledTrue(merchantId: Long): List<MerchantPaymentMethod>
     fun findByMerchantId(merchantId: Long): List<MerchantPaymentMethod>
+    fun existsByMerchantIdAndPaymentMethodId(merchantId: Long, paymentMethodId: Long): Boolean
 }

@@ -7,7 +7,8 @@ import org.springframework.stereotype.Service
 
 @Service
 class AuthService(
-    private val psgsCredentialService: PsgsCredentialService
+    private val psgsCredentialService: PsgsCredentialService,
+    private val posMerchantDefaultsService: PosMerchantDefaultsService
 ) {
 
     fun login(request: LoginRequest): ApiResponse<LoginResponse> {
@@ -15,6 +16,11 @@ class AuthService(
 
         val credential = psgsCredentialService.authenticate(request.username, request.password)
             ?: throw RuntimeException("Invalid username or password")
+
+        posMerchantDefaultsService.ensureForMerchant(
+            merchantId = credential.merchant.id,
+            username = credential.user.username ?: request.username
+        )
 
         return buildLoginResponse(
             username = credential.user.username ?: request.username,
