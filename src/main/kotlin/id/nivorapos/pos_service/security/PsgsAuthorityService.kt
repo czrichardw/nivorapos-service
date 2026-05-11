@@ -1,6 +1,7 @@
 package id.nivorapos.pos_service.security
 
 import id.nivorapos.pos_service.service.PsgsCredentialService
+import net.logstash.logback.argument.StructuredArguments.keyValue
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
@@ -38,7 +39,14 @@ class PsgsAuthorityService(
         if (!psgsCredentialService.isEnabled()) return DEFAULT_POS_AUTHORITIES
 
         val user = runCatching { psgsCredentialService.findUser(username) }
-            .onFailure { log.warn("[AUTH] PSGS user authority lookup failed for '$username': ${it.message}") }
+            .onFailure {
+                log.warn(
+                    "psgs authority lookup failed",
+                    keyValue("event_action", "authority_lookup_error"),
+                    keyValue("user_name", username),
+                    keyValue("exception_class", it.javaClass.name)
+                )
+            }
             .getOrNull()
             ?: return emptyList()
 

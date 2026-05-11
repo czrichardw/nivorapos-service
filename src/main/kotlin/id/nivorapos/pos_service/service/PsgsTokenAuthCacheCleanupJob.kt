@@ -1,6 +1,7 @@
 package id.nivorapos.pos_service.service
 
 import org.slf4j.LoggerFactory
+import net.logstash.logback.argument.StructuredArguments.keyValue
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
@@ -24,7 +25,17 @@ class PsgsTokenAuthCacheCleanupJob(
             deleted = cacheService.pruneExpired()
         }
         if (deleted > 0) {
-            log.info("[AUTH-CACHE] pruned $deleted expired PSGS token cache rows in ${durationMs}ms")
+            log.info(
+                "psgs auth cache pruned",
+                keyValue("event_action", "auth_cache_pruned"),
+                keyValue("deleted_count", deleted)
+            )
+            log.debug(
+                "psgs auth cache prune timing",
+                keyValue("event_action", "auth_cache_prune_timing"),
+                keyValue("deleted_count", deleted),
+                keyValue("duration_ms", durationMs)
+            )
         }
     }
 }

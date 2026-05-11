@@ -1,6 +1,7 @@
 package id.nivorapos.pos_service.config
 
 import org.slf4j.LoggerFactory
+import net.logstash.logback.argument.StructuredArguments.keyValue
 import java.io.PrintWriter
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.InvocationTargetException
@@ -166,8 +167,13 @@ class PsgsJdbcLoggingDataSource(
         private fun logSlowQuery(sql: String?, elapsedMs: Long, thrown: Throwable?) {
             if (slowQueryThresholdMs <= 0 || elapsedMs < slowQueryThresholdMs) return
 
-            val status = if (thrown == null) "" else " failed=${thrown.javaClass.simpleName}"
-            log.info("[PSGS-SLOW] ${elapsedMs}ms$status ${oneLine(sql)}")
+            log.debug(
+                "psgs slow query",
+                keyValue("event_action", "psgs_slow_query"),
+                keyValue("duration_ms", elapsedMs),
+                keyValue("exception_class", thrown?.javaClass?.name),
+                keyValue("sql", oneLine(sql))
+            )
         }
     }
 

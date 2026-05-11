@@ -1,21 +1,35 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <!-- Honor Spring Boot's logging.* properties (level, pattern, file path) -->
+    <!-- Honor Spring Boot's logging.* properties (level, file path, etc.) -->
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
-    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <springProperty scope="context" name="springAppName" source="spring.application.name" defaultValue="pos-service"/>
+
+    <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdc>true</includeMdc>
+            <includeContext>false</includeContext>
+            <customFields>{"service_name":"${springAppName}","log_format":"json"}</customFields>
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <level>level</level>
+                <logger>logger</logger>
+                <thread>thread</thread>
+                <message>message</message>
+                <stackTrace>stack_trace</stackTrace>
+            </fieldNames>
+        </encoder>
+    </appender>
 
     <!--
-        Wrap CONSOLE in an AsyncAppender. log.info(...) calls enqueue and
+        Wrap console output in an AsyncAppender. log.info(...) calls enqueue and
         return; a background thread drains the queue. Keeps slow Docker
         log drivers from blocking request threads.
     -->
     <appender name="ASYNC_CONSOLE" class="ch.qos.logback.classic.AsyncAppender">
-        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="JSON_CONSOLE"/>
         <queueSize>4096</queueSize>
-        <!-- 0 = never block; messages over the queue limit are dropped -->
         <discardingThreshold>0</discardingThreshold>
-        <!-- TRACE/DEBUG/INFO are eligible to be dropped under pressure;
-             WARN/ERROR are always kept (default) -->
         <neverBlock>true</neverBlock>
         <includeCallerData>false</includeCallerData>
     </appender>
