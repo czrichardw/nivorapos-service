@@ -32,28 +32,52 @@ class JwtAuthenticationFilter(
         filterChain: FilterChain
     ) {
         val authHeader = request.getHeader("Authorization")
+        val posTokenHeader = request.getHeader("pos-token")
 
-        if (authHeader.isNullOrBlank()) {
+        val tokens = listOfNotNull(
+            authHeader?.let { authorizationTokenOf(it) },
+            posTokenHeader?.trim()?.takeIf { it.isNotBlank() }
+        ).distinct()
+
+        if (tokens.isEmpty()) {
             log.debug(
                 "authentication skipped",
                 keyValue("event_action", "auth_skipped"),
-                keyValue("reason", "missing_authorization_header")
+                keyValue("reason", "missing_token_header")
             )
             filterChain.doFilter(request, response)
             return
         }
-
-        val token = if (authHeader.startsWith("Bearer ", ignoreCase = true)) authHeader.substring(7).trim() else authHeader.trim()
 
         if (SecurityContextHolder.getContext().authentication != null) {
             filterChain.doFilter(request, response)
             return
         }
 
+        tokens.forEachIndexed { index, token ->
+            if (SecurityContextHolder.getContext().authentication == null) {
+                authenticateToken(token, request, if (index == 0) "primary" else "fallback")
+            }
+        }
+
+        filterChain.doFilter(request, response)
+    }
+
+    private fun authorizationTokenOf(authHeader: String): String? {
+        val token = if (authHeader.startsWith("Bearer ", ignoreCase = true)) {
+            authHeader.substring(7).trim()
+        } else {
+            authHeader.trim()
+        }
+        return token.takeIf { it.isNotBlank() }
+    }
+
+    private fun authenticateToken(token: String, request: HttpServletRequest, tokenSource: String) {
         log.debug(
             "authentication started",
             keyValue("event_action", "auth_started"),
-            keyValue("auth_provider", "nivorapos_jwt")
+            keyValue("auth_provider", "nivorapos_jwt"),
+            keyValue("token_source", tokenSource)
         )
 
         try {
@@ -75,6 +99,7 @@ class JwtAuthenticationFilter(
                         "authentication succeeded",
                         keyValue("event_action", "auth_succeeded"),
                         keyValue("auth_provider", "nivorapos_jwt"),
+                        keyValue("token_source", tokenSource),
                         keyValue("user_name", username),
                         keyValue("merchant_id", merchantId)
                     )
@@ -83,36 +108,38 @@ class JwtAuthenticationFilter(
                         "nivorapos jwt rejected; falling back to psgs",
                         keyValue("event_action", "auth_fallback"),
                         keyValue("auth_provider", "nivorapos_jwt"),
+                        keyValue("token_source", tokenSource),
                         keyValue("user_name", username)
                     )
-                    tryAuthenticateWithPsgsSession(token, request)
+                    tryAuthenticateWithPsgsSession(token, request, tokenSource)
                 }
             } else {
                 log.warn(
                     "nivorapos jwt rejected; falling back to psgs",
                     keyValue("event_action", "auth_fallback"),
+                    keyValue("token_source", tokenSource),
                     keyValue("reason", "blank_username")
                 )
-                tryAuthenticateWithPsgsSession(token, request)
+                tryAuthenticateWithPsgsSession(token, request, tokenSource)
             }
         } catch (e: Exception) {
             log.debug(
                 "nivorapos jwt parse failed; falling back to psgs",
                 keyValue("event_action", "auth_fallback"),
+                keyValue("token_source", tokenSource),
                 keyValue("exception_class", e.javaClass.name),
                 keyValue("exception_message", e.message)
             )
-            tryAuthenticateWithPsgsSession(token, request)
+            tryAuthenticateWithPsgsSession(token, request, tokenSource)
         }
-
-        filterChain.doFilter(request, response)
     }
 
-    private fun tryAuthenticateWithPsgsSession(token: String, request: HttpServletRequest) {
+    private fun tryAuthenticateWithPsgsSession(token: String, request: HttpServletRequest, tokenSource: String) {
         if (!psgsCredentialService.isEnabled()) {
             log.warn(
                 "psgs authentication unavailable",
                 keyValue("event_action", "auth_rejected"),
+                keyValue("token_source", tokenSource),
                 keyValue("reason", "psgs_integration_disabled")
             )
             return
@@ -130,6 +157,7 @@ class JwtAuthenticationFilter(
             log.debug(
                 "psgs auth cache hit",
                 keyValue("event_action", "auth_cache_hit"),
+                keyValue("token_source", tokenSource),
                 keyValue("user_name", cachedAuth.username),
                 keyValue("merchant_id", cachedAuth.merchantId),
                 keyValue("lookup_ms", cacheLookupMs),
@@ -141,12 +169,14 @@ class JwtAuthenticationFilter(
         log.debug(
             "psgs auth cache miss",
             keyValue("event_action", "auth_cache_miss"),
+            keyValue("token_source", tokenSource),
             keyValue("lookup_ms", cacheLookupMs),
             keyValue("token_hash_prefix", tokenHash.take(12))
         )
         log.debug(
             "psgs session lookup started",
             keyValue("event_action", "psgs_session_lookup_started"),
+            keyValue("token_source", tokenSource),
             keyValue("token_hash_prefix", tokenHash.take(12))
         )
 
@@ -158,6 +188,7 @@ class JwtAuthenticationFilter(
                 log.warn(
                     "psgs authentication rejected",
                     keyValue("event_action", "auth_rejected"),
+                    keyValue("token_source", tokenSource),
                     keyValue("reason", "psgs_session_not_found")
                 )
                 return
@@ -165,6 +196,7 @@ class JwtAuthenticationFilter(
             log.debug(
                 "psgs session found",
                 keyValue("event_action", "psgs_session_found"),
+                keyValue("token_source", tokenSource),
                 keyValue("user_name", session.username),
                 keyValue("hit_from", session.hitFrom),
                 keyValue("session_updated_at", session.updateAt),
@@ -176,6 +208,7 @@ class JwtAuthenticationFilter(
                 log.warn(
                     "psgs authentication rejected",
                     keyValue("event_action", "auth_rejected"),
+                    keyValue("token_source", tokenSource),
                     keyValue("reason", "missing_user_or_merchant"),
                     keyValue("user_name", session.username)
                 )
@@ -187,6 +220,7 @@ class JwtAuthenticationFilter(
             log.debug(
                 "psgs credential resolved",
                 keyValue("event_action", "psgs_credential_resolved"),
+                keyValue("token_source", tokenSource),
                 keyValue("user_name", session.username),
                 keyValue("merchant_id", merchantId),
                 keyValue("merchant_name", merchantName)
@@ -215,6 +249,7 @@ class JwtAuthenticationFilter(
             log.debug(
                 "psgs auth cache upserted",
                 keyValue("event_action", "auth_cache_upserted"),
+                keyValue("token_source", tokenSource),
                 keyValue("user_name", session.username),
                 keyValue("merchant_id", merchantId),
                 keyValue("duration_ms", elapsedMs(upsertStart))
@@ -223,6 +258,7 @@ class JwtAuthenticationFilter(
                 "authentication succeeded",
                 keyValue("event_action", "auth_succeeded"),
                 keyValue("auth_provider", "psgs_session"),
+                keyValue("token_source", tokenSource),
                 keyValue("user_name", session.username),
                 keyValue("merchant_id", merchantId)
             )
@@ -230,6 +266,7 @@ class JwtAuthenticationFilter(
             log.error(
                 "psgs authentication failed",
                 keyValue("event_action", "auth_error"),
+                keyValue("token_source", tokenSource),
                 keyValue("exception_class", e.javaClass.name),
                 keyValue("exception_message", e.message),
                 e
