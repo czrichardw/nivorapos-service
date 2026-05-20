@@ -15,9 +15,48 @@ If `server.servlet.context-path` is changed, replace `/NivoraPos` with the confi
 
 ### Authentication
 
-Current behavior: public endpoint.
+`/images/upload` and `/images/delete` accept either:
 
-`/images/upload` and `/images/**` are currently configured as `permitAll` in Spring Security.
+- a valid POS/PSGS bearer token, or
+- a timestamped HMAC upload signature.
+
+When bearer authentication is not present or cannot be validated, send:
+
+| Header | Required | Description |
+| --- | --- | --- |
+| `X-Upload-Timestamp` | yes | ISO-8601 timestamp with timezone offset. Use GMT+7 / WIB as `+07:00`, for example `2026-05-20T15:05:40+07:00`. Epoch seconds or milliseconds are also accepted for compatibility. Must be within the configured clock skew. |
+| `X-Upload-Signature` | yes | Lowercase hex HMAC-SHA256 signature. |
+
+Signature config:
+
+```properties
+app.image-upload.api-secret=${IMAGE_UPLOAD_API_SECRET:}
+app.image-upload.signature-skew-seconds=${IMAGE_UPLOAD_SIGNATURE_SKEW_SECONDS:300}
+```
+
+Canonical string:
+
+```text
+HTTP_METHOD|REQUEST_URI_WITH_QUERY|X_UPLOAD_TIMESTAMP
+```
+
+The canonical string is the exact one-line text signed by both the client and backend. It uses `|` as the delimiter, and the timestamp part must be exactly the same value sent in `X-Upload-Timestamp`.
+
+Examples:
+
+```text
+POST|/NivoraPos/images/upload|2026-05-20T15:05:40+07:00
+```
+
+```text
+DELETE|/NivoraPos/images/delete?url=https%3A%2F%2Fassets.example.com%2Fnivora-pos-images%2Fimages%2Fproduct%2F2026-05-03%2Fproduct_abc123.jpg|2026-05-20T15:05:40+07:00
+```
+
+Compute:
+
+```text
+X-Upload-Signature = hex(HMAC_SHA256(IMAGE_UPLOAD_API_SECRET, canonical_string))
+```
 
 ### Request
 
@@ -53,7 +92,17 @@ app.upload.max-size-bytes
 
 ```bash
 curl -X POST "https://api.example.com/NivoraPos/images/upload" \
+  -H "X-Upload-Timestamp: 2026-05-20T15:05:40+07:00" \
+  -H "X-Upload-Signature: <hmac-sha256-hex>" \
   -F "file=@/path/to/product.jpg"
+```
+
+For delete, sign the exact request URI including the encoded `url` query string:
+
+```bash
+curl -X DELETE "https://api.example.com/NivoraPos/images/delete?url=https%3A%2F%2Fassets.example.com%2Fnivora-pos-images%2Fimages%2Fproduct%2F2026-05-03%2Fproduct_abc123.jpg" \
+  -H "X-Upload-Timestamp: 2026-05-20T15:05:40+07:00" \
+  -H "X-Upload-Signature: <hmac-sha256-hex>"
 ```
 
 ### Success Response
