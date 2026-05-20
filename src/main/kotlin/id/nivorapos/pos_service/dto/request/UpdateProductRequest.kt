@@ -6,18 +6,18 @@ import java.math.BigDecimal
 data class UpdateProductRequest(
     @JsonAlias("productId")
     val id: Long,
-    val name: String,
+    val name: String? = null,
     @JsonAlias("price")
-    val basePrice: BigDecimal,
+    val basePrice: BigDecimal? = null,
     val sku: String? = null,
     val upc: String? = null,
     val imageUrl: String? = null,
     val imageThumbUrl: String? = null,
     val description: String? = null,
     val stockMode: String? = null,
-    val isTaxable: Boolean = false,
+    val isTaxable: Boolean? = null,
     val taxId: Long? = null,
-    val categoryIds: List<Long> = emptyList(),
-    val isActive: Boolean = true,
-    val isStock: Boolean = true
+    val categoryIds: List<Long>? = null,
+    val isActive: Boolean? = null,
+    val isStock: Boolean? = null
 )

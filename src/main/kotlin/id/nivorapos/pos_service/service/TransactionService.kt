@@ -323,7 +323,7 @@ class TransactionService(
 
         val previousStatus = transaction.status
         val effectiveStatusForStock = request.paymentStatus ?: request.status
-        transaction.status = request.status
+        transaction.status = request.status ?: transaction.status
         if (request.cashTendered != null) transaction.cashTendered = parseBD(request.cashTendered)
         if (request.cashChange != null) transaction.cashChange = parseBD(request.cashChange)
         transaction.modifiedBy = username
@@ -335,7 +335,7 @@ class TransactionService(
         if (payments.isNotEmpty()) {
             val payment = payments.first()
             val effectiveStatus = request.paymentStatus ?: request.status
-            payment.status = effectiveStatus
+            if (effectiveStatus != null) payment.status = effectiveStatus
             if (request.paymentReference != null) payment.paymentReference = request.paymentReference
             if (request.paymentTrxId != null) payment.paymentTrxId = request.paymentTrxId
             if (request.paymentMethod != null) payment.paymentMethod = request.paymentMethod
@@ -350,9 +350,9 @@ class TransactionService(
         }
 
         when {
-            !isPaidStatus(previousStatus) && isPaidStatus(effectiveStatusForStock) ->
+            effectiveStatusForStock != null && !isPaidStatus(previousStatus) && isPaidStatus(effectiveStatusForStock) ->
                 reduceStockForTransaction(transaction, username, now)
-            isFailedOrCancelledStatus(effectiveStatusForStock) ->
+            effectiveStatusForStock != null && isFailedOrCancelledStatus(effectiveStatusForStock) ->
                 restoreStockForTransaction(transaction, username, now)
         }
 

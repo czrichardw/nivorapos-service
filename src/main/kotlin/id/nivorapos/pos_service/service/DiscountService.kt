@@ -55,23 +55,30 @@ class DiscountService(
         val now = LocalDateTime.now()
 
         validate(request, merchantId)
+        val name = request.name!!
+        val valueType = request.valueType!!.uppercase()
+        val value = request.value!!
+        val minPurchase = request.minPurchase ?: BigDecimal.ZERO
+        val scope = request.scope!!.uppercase()
+        val channel = request.channel!!.uppercase()
+        val visibility = request.visibility!!.uppercase()
 
         val discount = Discount(
             merchantId = merchantId,
-            name = request.name,
+            name = name,
             code = request.code?.uppercase()?.trim(),
-            valueType = request.valueType.uppercase(),
-            value = request.value,
+            valueType = valueType,
+            value = value,
             maxDiscountAmount = request.maxDiscountAmount,
-            minPurchase = request.minPurchase,
-            scope = request.scope.uppercase(),
-            channel = request.channel.uppercase(),
-            visibility = request.visibility.uppercase(),
+            minPurchase = minPurchase,
+            scope = scope,
+            channel = channel,
+            visibility = visibility,
             usageLimit = request.usageLimit,
             usagePerCustomer = request.usagePerCustomer,
             startDate = request.startDate,
             endDate = request.endDate,
-            isActive = request.isActive,
+            isActive = request.isActive ?: true,
             createdBy = username,
             createdDate = now,
             modifiedBy = username,
@@ -88,29 +95,48 @@ class DiscountService(
         val merchantId = SecurityUtils.getMerchantIdFromContext()
         val discount = discountRepository.findByIdAndMerchantIdAndDeletedDateIsNull(id, merchantId)
             .orElseThrow { RuntimeException("Discount tidak ditemukan") }
+        val merged = request.copy(
+            name = request.name ?: discount.name,
+            code = request.code ?: discount.code,
+            valueType = request.valueType ?: discount.valueType,
+            value = request.value ?: discount.value,
+            maxDiscountAmount = request.maxDiscountAmount ?: discount.maxDiscountAmount,
+            minPurchase = request.minPurchase ?: discount.minPurchase,
+            scope = request.scope ?: discount.scope,
+            productIds = request.productIds ?: discountProductRepository.findByDiscountId(id).map { it.productId },
+            categoryIds = request.categoryIds ?: discountCategoryRepository.findByDiscountId(id).map { it.categoryId },
+            channel = request.channel ?: discount.channel,
+            visibility = request.visibility ?: discount.visibility,
+            outletIds = request.outletIds ?: discountOutletRepository.findByDiscountId(id).map { it.outletId },
+            usageLimit = request.usageLimit ?: discount.usageLimit,
+            usagePerCustomer = request.usagePerCustomer ?: discount.usagePerCustomer,
+            startDate = request.startDate ?: discount.startDate,
+            endDate = request.endDate ?: discount.endDate,
+            isActive = request.isActive ?: discount.isActive
+        )
 
-        validate(request, merchantId, excludeId = id)
+        validate(merged, merchantId, excludeId = id)
 
-        discount.name = request.name
-        discount.code = request.code?.uppercase()?.trim()
-        discount.valueType = request.valueType.uppercase()
-        discount.value = request.value
-        discount.maxDiscountAmount = request.maxDiscountAmount
-        discount.minPurchase = request.minPurchase
-        discount.scope = request.scope.uppercase()
-        discount.channel = request.channel.uppercase()
-        discount.visibility = request.visibility.uppercase()
-        discount.usageLimit = request.usageLimit
-        discount.usagePerCustomer = request.usagePerCustomer
-        discount.startDate = request.startDate
-        discount.endDate = request.endDate
-        discount.isActive = request.isActive
+        discount.name = merged.name!!
+        discount.code = merged.code?.uppercase()?.trim()
+        discount.valueType = merged.valueType!!.uppercase()
+        discount.value = merged.value!!
+        discount.maxDiscountAmount = merged.maxDiscountAmount
+        discount.minPurchase = merged.minPurchase ?: BigDecimal.ZERO
+        discount.scope = merged.scope!!.uppercase()
+        discount.channel = merged.channel!!.uppercase()
+        discount.visibility = merged.visibility!!.uppercase()
+        discount.usageLimit = merged.usageLimit
+        discount.usagePerCustomer = merged.usagePerCustomer
+        discount.startDate = merged.startDate
+        discount.endDate = merged.endDate
+        discount.isActive = merged.isActive ?: discount.isActive
         discount.modifiedBy = SecurityUtils.getUsernameFromContext()
         discount.modifiedDate = LocalDateTime.now()
 
         val saved = discountRepository.save(discount)
         clearBindings(id)
-        saveBindings(id, request)
+        saveBindings(id, merged)
 
         return ApiResponse.success("Discount updated", buildResponse(saved))
     }
@@ -250,41 +276,50 @@ class DiscountService(
     // ─── Internal helpers ─────────────────────────────────────────────────────
 
     private fun validate(request: DiscountRequest, merchantId: Long, excludeId: Long? = null) {
-        require(request.name.isNotBlank()) { "name wajib diisi" }
-        require(request.valueType.uppercase() in listOf("PERCENTAGE", "AMOUNT", "SPECIAL_PRICE")) {
+        val name = request.name ?: throw IllegalArgumentException("name wajib diisi")
+        val valueType = request.valueType?.uppercase() ?: throw IllegalArgumentException("valueType wajib diisi")
+        val value = request.value ?: throw IllegalArgumentException("value wajib diisi")
+        val minPurchase = request.minPurchase ?: BigDecimal.ZERO
+        val scope = request.scope?.uppercase() ?: throw IllegalArgumentException("scope wajib diisi")
+        val channel = request.channel?.uppercase() ?: throw IllegalArgumentException("channel wajib diisi")
+        val visibility = request.visibility?.uppercase() ?: throw IllegalArgumentException("visibility wajib diisi")
+        val productIds = request.productIds ?: emptyList()
+        val categoryIds = request.categoryIds ?: emptyList()
+        val outletIds = request.outletIds ?: emptyList()
+
+        require(name.isNotBlank()) { "name wajib diisi" }
+        require(valueType in listOf("PERCENTAGE", "AMOUNT", "SPECIAL_PRICE")) {
             "valueType harus PERCENTAGE, AMOUNT, atau SPECIAL_PRICE"
         }
-        require(request.value > BigDecimal.ZERO) { "value harus > 0" }
-        if (request.valueType.uppercase() == "PERCENTAGE") {
-            require(request.value <= BigDecimal("100")) { "value untuk PERCENTAGE harus <= 100" }
+        require(value > BigDecimal.ZERO) { "value harus > 0" }
+        if (valueType == "PERCENTAGE") {
+            require(value <= BigDecimal("100")) { "value untuk PERCENTAGE harus <= 100" }
         }
-        if (request.valueType.uppercase() == "SPECIAL_PRICE") {
-            require(request.scope.uppercase() == "PRODUCT") { "SPECIAL_PRICE hanya berlaku untuk scope=PRODUCT" }
+        if (valueType == "SPECIAL_PRICE") {
+            require(scope == "PRODUCT") { "SPECIAL_PRICE hanya berlaku untuk scope=PRODUCT" }
         }
         request.maxDiscountAmount?.let {
             require(it > BigDecimal.ZERO) { "maxDiscountAmount harus > 0" }
         }
-        request.minPurchase.let {
-            require(it >= BigDecimal.ZERO) { "minPurchase harus >= 0" }
-        }
-        require(request.scope.uppercase() in listOf("ALL", "PRODUCT", "CATEGORY")) {
+        require(minPurchase >= BigDecimal.ZERO) { "minPurchase harus >= 0" }
+        require(scope in listOf("ALL", "PRODUCT", "CATEGORY")) {
             "scope harus ALL, PRODUCT, atau CATEGORY"
         }
-        require(request.channel.uppercase() in listOf("POS", "ONLINE", "BOTH")) {
+        require(channel in listOf("POS", "ONLINE", "BOTH")) {
             "channel harus POS, ONLINE, atau BOTH"
         }
-        require(request.visibility.uppercase() in listOf("ALL_OUTLET", "SPECIFIC_OUTLET")) {
+        require(visibility in listOf("ALL_OUTLET", "SPECIFIC_OUTLET")) {
             "visibility harus ALL_OUTLET atau SPECIFIC_OUTLET"
         }
-        if (request.scope.uppercase() == "PRODUCT") {
-            require(request.productIds.isNotEmpty()) { "productIds wajib diisi untuk scope=PRODUCT" }
+        if (scope == "PRODUCT") {
+            require(productIds.isNotEmpty()) { "productIds wajib diisi untuk scope=PRODUCT" }
         }
-        if (request.scope.uppercase() == "CATEGORY") {
-            require(request.categoryIds.isNotEmpty()) { "categoryIds wajib diisi untuk scope=CATEGORY" }
+        if (scope == "CATEGORY") {
+            require(categoryIds.isNotEmpty()) { "categoryIds wajib diisi untuk scope=CATEGORY" }
         }
-        if (request.visibility.uppercase() == "SPECIFIC_OUTLET") {
-            require(request.outletIds.isNotEmpty()) { "outletIds wajib diisi untuk visibility=SPECIFIC_OUTLET" }
-            validatePsgsOutletIds(request.outletIds, merchantId)
+        if (visibility == "SPECIFIC_OUTLET") {
+            require(outletIds.isNotEmpty()) { "outletIds wajib diisi untuk visibility=SPECIFIC_OUTLET" }
+            validatePsgsOutletIds(outletIds, merchantId)
         }
         request.endDate?.let { end ->
             request.startDate?.let { start ->
@@ -305,18 +340,18 @@ class DiscountService(
     }
 
     private fun saveBindings(discountId: Long, request: DiscountRequest) {
-        if (request.scope.uppercase() == "PRODUCT") {
-            request.productIds.forEach {
+        if (request.scope?.uppercase() == "PRODUCT") {
+            request.productIds.orEmpty().forEach {
                 discountProductRepository.save(DiscountProduct(discountId = discountId, productId = it))
             }
         }
-        if (request.scope.uppercase() == "CATEGORY") {
-            request.categoryIds.forEach {
+        if (request.scope?.uppercase() == "CATEGORY") {
+            request.categoryIds.orEmpty().forEach {
                 discountCategoryRepository.save(DiscountCategory(discountId = discountId, categoryId = it))
             }
         }
-        if (request.visibility.uppercase() == "SPECIFIC_OUTLET") {
-            request.outletIds.forEach {
+        if (request.visibility?.uppercase() == "SPECIFIC_OUTLET") {
+            request.outletIds.orEmpty().forEach {
                 discountOutletRepository.save(DiscountOutlet(discountId = discountId, outletId = it))
             }
         }

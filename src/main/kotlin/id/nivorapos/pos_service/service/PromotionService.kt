@@ -60,28 +60,38 @@ class PromotionService(
         val now = LocalDateTime.now()
 
         validate(request, merchantId)
+        val name = request.name!!
+        val promoType = request.promoType!!.uppercase()
+        val priority = request.priority!!
+        val canCombine = request.canCombine!!
+        val buyScope = request.buyScope ?: "ALL"
+        val rewardScope = request.rewardScope ?: "ALL"
+        val minPurchase = request.minPurchase ?: BigDecimal.ZERO
+        val channel = request.channel!!.uppercase()
+        val visibility = request.visibility!!.uppercase()
+        val validDays = request.validDays ?: emptyList()
 
         val promo = Promotion(
             merchantId = merchantId,
-            name = request.name,
-            promoType = request.promoType.uppercase(),
-            priority = request.priority,
-            canCombine = request.canCombine,
-            isActive = request.isActive,
+            name = name,
+            promoType = promoType,
+            priority = priority,
+            canCombine = canCombine,
+            isActive = request.isActive ?: true,
             value = request.value,
             valueType = request.valueType?.uppercase(),
             maxDiscountAmount = request.maxDiscountAmount,
             buyQty = request.buyQty,
             getQty = request.getQty,
-            buyScope = request.buyScope.uppercase(),
+            buyScope = buyScope.uppercase(),
             rewardType = request.rewardType?.uppercase(),
             rewardValue = request.rewardValue,
-            rewardScope = request.rewardScope.uppercase(),
-            isMultiplied = request.isMultiplied,
-            minPurchase = request.minPurchase,
-            channel = request.channel.uppercase(),
-            visibility = request.visibility.uppercase(),
-            validDays = if (request.validDays.isEmpty()) null else request.validDays.joinToString(",").uppercase(),
+            rewardScope = rewardScope.uppercase(),
+            isMultiplied = request.isMultiplied ?: false,
+            minPurchase = minPurchase,
+            channel = channel,
+            visibility = visibility,
+            validDays = if (validDays.isEmpty()) null else validDays.joinToString(",").uppercase(),
             startDate = request.startDate,
             endDate = request.endDate,
             createdBy = username,
@@ -100,36 +110,64 @@ class PromotionService(
         val merchantId = SecurityUtils.getMerchantIdFromContext()
         val promo = promotionRepository.findByIdAndMerchantIdAndDeletedDateIsNull(id, merchantId)
             .orElseThrow { RuntimeException("Promosi tidak ditemukan") }
+        val merged = request.copy(
+            name = request.name ?: promo.name,
+            promoType = request.promoType ?: promo.promoType,
+            priority = request.priority ?: promo.priority,
+            canCombine = request.canCombine ?: promo.canCombine,
+            isActive = request.isActive ?: promo.isActive,
+            value = request.value ?: promo.value,
+            valueType = request.valueType ?: promo.valueType,
+            maxDiscountAmount = request.maxDiscountAmount ?: promo.maxDiscountAmount,
+            buyQty = request.buyQty ?: promo.buyQty,
+            getQty = request.getQty ?: promo.getQty,
+            rewardType = request.rewardType ?: promo.rewardType,
+            rewardValue = request.rewardValue ?: promo.rewardValue,
+            isMultiplied = request.isMultiplied ?: promo.isMultiplied,
+            buyScope = request.buyScope ?: promo.buyScope,
+            buyProductIds = request.buyProductIds ?: promotionBuyProductRepository.findByPromotionId(id).map { it.productId },
+            buyCategoryIds = request.buyCategoryIds ?: promotionBuyCategoryRepository.findByPromotionId(id).map { it.categoryId },
+            rewardScope = request.rewardScope ?: promo.rewardScope,
+            rewardProductIds = request.rewardProductIds ?: promotionRewardProductRepository.findByPromotionId(id).map { it.productId },
+            rewardCategoryIds = request.rewardCategoryIds ?: promotionRewardCategoryRepository.findByPromotionId(id).map { it.categoryId },
+            minPurchase = request.minPurchase ?: promo.minPurchase,
+            channel = request.channel ?: promo.channel,
+            visibility = request.visibility ?: promo.visibility,
+            outletIds = request.outletIds ?: promotionOutletRepository.findByPromotionId(id).map { it.outletId },
+            validDays = request.validDays ?: promo.validDays?.split(",")?.map { it.trim() }.orEmpty(),
+            startDate = request.startDate ?: promo.startDate,
+            endDate = request.endDate ?: promo.endDate
+        )
 
-        validate(request, merchantId)
+        validate(merged, merchantId)
 
-        promo.name = request.name
-        promo.promoType = request.promoType.uppercase()
-        promo.priority = request.priority
-        promo.canCombine = request.canCombine
-        promo.isActive = request.isActive
-        promo.value = request.value
-        promo.valueType = request.valueType?.uppercase()
-        promo.maxDiscountAmount = request.maxDiscountAmount
-        promo.buyQty = request.buyQty
-        promo.getQty = request.getQty
-        promo.buyScope = request.buyScope.uppercase()
-        promo.rewardType = request.rewardType?.uppercase()
-        promo.rewardValue = request.rewardValue
-        promo.rewardScope = request.rewardScope.uppercase()
-        promo.isMultiplied = request.isMultiplied
-        promo.minPurchase = request.minPurchase
-        promo.channel = request.channel.uppercase()
-        promo.visibility = request.visibility.uppercase()
-        promo.validDays = if (request.validDays.isEmpty()) null else request.validDays.joinToString(",").uppercase()
-        promo.startDate = request.startDate
-        promo.endDate = request.endDate
+        promo.name = merged.name!!
+        promo.promoType = merged.promoType!!.uppercase()
+        promo.priority = merged.priority!!
+        promo.canCombine = merged.canCombine!!
+        promo.isActive = merged.isActive ?: promo.isActive
+        promo.value = merged.value
+        promo.valueType = merged.valueType?.uppercase()
+        promo.maxDiscountAmount = merged.maxDiscountAmount
+        promo.buyQty = merged.buyQty
+        promo.getQty = merged.getQty
+        promo.buyScope = (merged.buyScope ?: "ALL").uppercase()
+        promo.rewardType = merged.rewardType?.uppercase()
+        promo.rewardValue = merged.rewardValue
+        promo.rewardScope = (merged.rewardScope ?: "ALL").uppercase()
+        promo.isMultiplied = merged.isMultiplied ?: false
+        promo.minPurchase = merged.minPurchase ?: BigDecimal.ZERO
+        promo.channel = merged.channel!!.uppercase()
+        promo.visibility = merged.visibility!!.uppercase()
+        promo.validDays = if (merged.validDays.orEmpty().isEmpty()) null else merged.validDays!!.joinToString(",").uppercase()
+        promo.startDate = merged.startDate
+        promo.endDate = merged.endDate
         promo.modifiedBy = SecurityUtils.getUsernameFromContext()
         promo.modifiedDate = LocalDateTime.now()
 
         val saved = promotionRepository.save(promo)
         clearBindings(id)
-        saveBindings(id, request)
+        saveBindings(id, merged)
 
         return ApiResponse.success("Promotion updated", buildResponse(saved))
     }
@@ -359,19 +397,33 @@ class PromotionService(
     }
 
     private fun validate(request: PromotionRequest, merchantId: Long) {
-        require(request.name.isNotBlank()) { "name wajib diisi" }
-        require(request.promoType.uppercase() in listOf("DISCOUNT_BY_ORDER", "BUY_X_GET_Y", "DISCOUNT_BY_ITEM_SUBTOTAL")) {
+        val name = request.name ?: throw IllegalArgumentException("name wajib diisi")
+        val promoType = request.promoType?.uppercase() ?: throw IllegalArgumentException("promoType wajib diisi")
+        val priority = request.priority ?: throw IllegalArgumentException("priority wajib diisi")
+        val channel = request.channel?.uppercase() ?: throw IllegalArgumentException("channel wajib diisi")
+        val visibility = request.visibility?.uppercase() ?: throw IllegalArgumentException("visibility wajib diisi")
+        val buyScope = request.buyScope?.uppercase() ?: "ALL"
+        val rewardScope = request.rewardScope?.uppercase() ?: "ALL"
+        val minPurchase = request.minPurchase ?: BigDecimal.ZERO
+        val outletIds = request.outletIds ?: emptyList()
+        val buyProductIds = request.buyProductIds ?: emptyList()
+        val buyCategoryIds = request.buyCategoryIds ?: emptyList()
+        val rewardProductIds = request.rewardProductIds ?: emptyList()
+        val rewardCategoryIds = request.rewardCategoryIds ?: emptyList()
+
+        require(name.isNotBlank()) { "name wajib diisi" }
+        require(promoType in listOf("DISCOUNT_BY_ORDER", "BUY_X_GET_Y", "DISCOUNT_BY_ITEM_SUBTOTAL")) {
             "promoType harus DISCOUNT_BY_ORDER, BUY_X_GET_Y, atau DISCOUNT_BY_ITEM_SUBTOTAL"
         }
-        require(request.priority >= 1) { "priority harus >= 1" }
-        require(request.channel.uppercase() in listOf("POS", "ONLINE", "BOTH")) { "channel tidak valid" }
-        require(request.visibility.uppercase() in listOf("ALL_OUTLET", "SPECIFIC_OUTLET")) { "visibility tidak valid" }
-        if (request.visibility.uppercase() == "SPECIFIC_OUTLET") {
-            require(request.outletIds.isNotEmpty()) { "outletIds wajib diisi untuk visibility=SPECIFIC_OUTLET" }
-            validatePsgsOutletIds(request.outletIds, merchantId)
+        require(priority >= 1) { "priority harus >= 1" }
+        require(channel in listOf("POS", "ONLINE", "BOTH")) { "channel tidak valid" }
+        require(visibility in listOf("ALL_OUTLET", "SPECIFIC_OUTLET")) { "visibility tidak valid" }
+        if (visibility == "SPECIFIC_OUTLET") {
+            require(outletIds.isNotEmpty()) { "outletIds wajib diisi untuk visibility=SPECIFIC_OUTLET" }
+            validatePsgsOutletIds(outletIds, merchantId)
         }
 
-        when (request.promoType.uppercase()) {
+        when (promoType) {
             "DISCOUNT_BY_ORDER", "DISCOUNT_BY_ITEM_SUBTOTAL" -> {
                 require(request.value != null && request.value > BigDecimal.ZERO) { "value wajib diisi dan > 0" }
                 require(request.valueType != null && request.valueType.uppercase() in listOf("PERCENTAGE", "AMOUNT", "SPECIAL_PRICE")) {
@@ -381,10 +433,10 @@ class PromotionService(
                     require(request.value!! <= BigDecimal("100")) { "value untuk PERCENTAGE harus <= 100" }
                 }
                 if (request.valueType?.uppercase() == "SPECIAL_PRICE") {
-                    require(request.promoType.uppercase() == "DISCOUNT_BY_ITEM_SUBTOTAL") {
+                    require(promoType == "DISCOUNT_BY_ITEM_SUBTOTAL") {
                         "SPECIAL_PRICE hanya berlaku untuk promoType=DISCOUNT_BY_ITEM_SUBTOTAL"
                     }
-                    require(request.buyScope.uppercase() != "ALL") {
+                    require(buyScope != "ALL") {
                         "SPECIAL_PRICE harus memiliki buyScope=PRODUCT atau CATEGORY"
                     }
                 }
@@ -408,36 +460,37 @@ class PromotionService(
                 require(end.isAfter(start)) { "endDate harus setelah startDate" }
             }
         }
+        require(minPurchase >= BigDecimal.ZERO) { "minPurchase harus >= 0" }
 
-        if (request.buyScope.uppercase() == "PRODUCT") {
-            require(request.buyProductIds.isNotEmpty()) { "buyProductIds wajib diisi untuk buyScope=PRODUCT" }
+        if (buyScope == "PRODUCT") {
+            require(buyProductIds.isNotEmpty()) { "buyProductIds wajib diisi untuk buyScope=PRODUCT" }
         }
-        if (request.buyScope.uppercase() == "CATEGORY") {
-            require(request.buyCategoryIds.isNotEmpty()) { "buyCategoryIds wajib diisi untuk buyScope=CATEGORY" }
+        if (buyScope == "CATEGORY") {
+            require(buyCategoryIds.isNotEmpty()) { "buyCategoryIds wajib diisi untuk buyScope=CATEGORY" }
         }
-        if (request.rewardScope.uppercase() == "PRODUCT") {
-            require(request.rewardProductIds.isNotEmpty()) { "rewardProductIds wajib diisi untuk rewardScope=PRODUCT" }
+        if (rewardScope == "PRODUCT") {
+            require(rewardProductIds.isNotEmpty()) { "rewardProductIds wajib diisi untuk rewardScope=PRODUCT" }
         }
-        if (request.rewardScope.uppercase() == "CATEGORY") {
-            require(request.rewardCategoryIds.isNotEmpty()) { "rewardCategoryIds wajib diisi untuk rewardScope=CATEGORY" }
+        if (rewardScope == "CATEGORY") {
+            require(rewardCategoryIds.isNotEmpty()) { "rewardCategoryIds wajib diisi untuk rewardScope=CATEGORY" }
         }
     }
 
     private fun saveBindings(promotionId: Long, request: PromotionRequest) {
-        request.buyProductIds.forEach {
+        request.buyProductIds.orEmpty().forEach {
             promotionBuyProductRepository.save(PromotionBuyProduct(promotionId = promotionId, productId = it))
         }
-        request.buyCategoryIds.forEach {
+        request.buyCategoryIds.orEmpty().forEach {
             promotionBuyCategoryRepository.save(PromotionBuyCategory(promotionId = promotionId, categoryId = it))
         }
-        request.rewardProductIds.forEach {
+        request.rewardProductIds.orEmpty().forEach {
             promotionRewardProductRepository.save(PromotionRewardProduct(promotionId = promotionId, productId = it))
         }
-        request.rewardCategoryIds.forEach {
+        request.rewardCategoryIds.orEmpty().forEach {
             promotionRewardCategoryRepository.save(PromotionRewardCategory(promotionId = promotionId, categoryId = it))
         }
-        if (request.visibility.uppercase() == "SPECIFIC_OUTLET") {
-            request.outletIds.forEach {
+        if (request.visibility?.uppercase() == "SPECIFIC_OUTLET") {
+            request.outletIds.orEmpty().forEach {
                 promotionOutletRepository.save(PromotionOutlet(promotionId = promotionId, outletId = it))
             }
         }
