@@ -178,7 +178,7 @@ class ProductService(
             )
         }
 
-        request.categoryIds.forEach { catId ->
+        request.categoryIds.distinct().forEach { catId ->
             val pc = ProductCategory(
                 productId = saved.id,
                 categoryId = catId,
@@ -235,18 +235,7 @@ class ProductService(
         request.isStock?.let { syncBaseProductStock(saved, it, username, now) }
 
         request.categoryIds?.let { categoryIds ->
-            productCategoryRepository.deleteByProductId(saved.id)
-            categoryIds.forEach { catId ->
-                val pc = ProductCategory(
-                    productId = saved.id,
-                    categoryId = catId,
-                    createdBy = username,
-                    createdDate = now,
-                    modifiedBy = username,
-                    modifiedDate = now
-                )
-                productCategoryRepository.save(pc)
-            }
+            syncProductCategories(saved.id, categoryIds, username, now)
         }
 
         return ApiResponse.success("Product updated", buildProductResponse(saved))
@@ -834,6 +823,39 @@ class ProductService(
                 username = username,
                 now = now
             )
+        }
+    }
+
+    private fun syncProductCategories(
+        productId: Long,
+        requestedCategoryIds: List<Long>,
+        username: String,
+        now: LocalDateTime
+    ) {
+        val requestedIds = requestedCategoryIds.distinct()
+        val requestedIdSet = requestedIds.toSet()
+        val existingLinks = productCategoryRepository.findByProductId(productId)
+        val existingIds = existingLinks.map { it.categoryId }.toSet()
+
+        val linksToRemove = existingLinks.filter { it.categoryId !in requestedIdSet }
+        if (linksToRemove.isNotEmpty()) {
+            productCategoryRepository.deleteAll(linksToRemove)
+        }
+
+        val linksToAdd = requestedIds
+            .filter { it !in existingIds }
+            .map { catId ->
+                ProductCategory(
+                    productId = productId,
+                    categoryId = catId,
+                    createdBy = username,
+                    createdDate = now,
+                    modifiedBy = username,
+                    modifiedDate = now
+                )
+            }
+        if (linksToAdd.isNotEmpty()) {
+            productCategoryRepository.saveAll(linksToAdd)
         }
     }
 

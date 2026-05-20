@@ -135,8 +135,7 @@ class DiscountService(
         discount.modifiedDate = LocalDateTime.now()
 
         val saved = discountRepository.save(discount)
-        clearBindings(id)
-        saveBindings(id, merged)
+        syncBindings(id, merged)
 
         return ApiResponse.success("Discount updated", buildResponse(saved))
     }
@@ -341,17 +340,17 @@ class DiscountService(
 
     private fun saveBindings(discountId: Long, request: DiscountRequest) {
         if (request.scope?.uppercase() == "PRODUCT") {
-            request.productIds.orEmpty().forEach {
+            request.productIds.orEmpty().distinct().forEach {
                 discountProductRepository.save(DiscountProduct(discountId = discountId, productId = it))
             }
         }
         if (request.scope?.uppercase() == "CATEGORY") {
-            request.categoryIds.orEmpty().forEach {
+            request.categoryIds.orEmpty().distinct().forEach {
                 discountCategoryRepository.save(DiscountCategory(discountId = discountId, categoryId = it))
             }
         }
         if (request.visibility?.uppercase() == "SPECIFIC_OUTLET") {
-            request.outletIds.orEmpty().forEach {
+            request.outletIds.orEmpty().distinct().forEach {
                 discountOutletRepository.save(DiscountOutlet(discountId = discountId, outletId = it))
             }
         }
@@ -365,10 +364,72 @@ class DiscountService(
         require(missing.isEmpty()) { "Outlet tidak ditemukan di midware_master.merchant_outlets: ${missing.joinToString(",")}" }
     }
 
-    private fun clearBindings(discountId: Long) {
-        discountProductRepository.deleteByDiscountId(discountId)
-        discountCategoryRepository.deleteByDiscountId(discountId)
-        discountOutletRepository.deleteByDiscountId(discountId)
+    private fun syncBindings(discountId: Long, request: DiscountRequest) {
+        when (request.scope?.uppercase()) {
+            "PRODUCT" -> {
+                syncDiscountProducts(discountId, request.productIds.orEmpty())
+                syncDiscountCategories(discountId, emptyList())
+            }
+            "CATEGORY" -> {
+                syncDiscountProducts(discountId, emptyList())
+                syncDiscountCategories(discountId, request.categoryIds.orEmpty())
+            }
+            else -> {
+                syncDiscountProducts(discountId, emptyList())
+                syncDiscountCategories(discountId, emptyList())
+            }
+        }
+
+        if (request.visibility?.uppercase() == "SPECIFIC_OUTLET") {
+            syncDiscountOutlets(discountId, request.outletIds.orEmpty())
+        } else {
+            syncDiscountOutlets(discountId, emptyList())
+        }
+    }
+
+    private fun syncDiscountProducts(discountId: Long, requestedProductIds: List<Long>) {
+        val requestedIds = requestedProductIds.distinct()
+        val requestedIdSet = requestedIds.toSet()
+        val existingLinks = discountProductRepository.findByDiscountId(discountId)
+        val existingIds = existingLinks.map { it.productId }.toSet()
+
+        val linksToRemove = existingLinks.filter { it.productId !in requestedIdSet }
+        if (linksToRemove.isNotEmpty()) discountProductRepository.deleteAll(linksToRemove)
+
+        val linksToAdd = requestedIds
+            .filter { it !in existingIds }
+            .map { DiscountProduct(discountId = discountId, productId = it) }
+        if (linksToAdd.isNotEmpty()) discountProductRepository.saveAll(linksToAdd)
+    }
+
+    private fun syncDiscountCategories(discountId: Long, requestedCategoryIds: List<Long>) {
+        val requestedIds = requestedCategoryIds.distinct()
+        val requestedIdSet = requestedIds.toSet()
+        val existingLinks = discountCategoryRepository.findByDiscountId(discountId)
+        val existingIds = existingLinks.map { it.categoryId }.toSet()
+
+        val linksToRemove = existingLinks.filter { it.categoryId !in requestedIdSet }
+        if (linksToRemove.isNotEmpty()) discountCategoryRepository.deleteAll(linksToRemove)
+
+        val linksToAdd = requestedIds
+            .filter { it !in existingIds }
+            .map { DiscountCategory(discountId = discountId, categoryId = it) }
+        if (linksToAdd.isNotEmpty()) discountCategoryRepository.saveAll(linksToAdd)
+    }
+
+    private fun syncDiscountOutlets(discountId: Long, requestedOutletIds: List<Long>) {
+        val requestedIds = requestedOutletIds.distinct()
+        val requestedIdSet = requestedIds.toSet()
+        val existingLinks = discountOutletRepository.findByDiscountId(discountId)
+        val existingIds = existingLinks.map { it.outletId }.toSet()
+
+        val linksToRemove = existingLinks.filter { it.outletId !in requestedIdSet }
+        if (linksToRemove.isNotEmpty()) discountOutletRepository.deleteAll(linksToRemove)
+
+        val linksToAdd = requestedIds
+            .filter { it !in existingIds }
+            .map { DiscountOutlet(discountId = discountId, outletId = it) }
+        if (linksToAdd.isNotEmpty()) discountOutletRepository.saveAll(linksToAdd)
     }
 
     private fun checkEligibility(

@@ -166,8 +166,7 @@ class PromotionService(
         promo.modifiedDate = LocalDateTime.now()
 
         val saved = promotionRepository.save(promo)
-        clearBindings(id)
-        saveBindings(id, merged)
+        syncBindings(id, merged)
 
         return ApiResponse.success("Promotion updated", buildResponse(saved))
     }
@@ -477,20 +476,20 @@ class PromotionService(
     }
 
     private fun saveBindings(promotionId: Long, request: PromotionRequest) {
-        request.buyProductIds.orEmpty().forEach {
+        request.buyProductIds.orEmpty().distinct().forEach {
             promotionBuyProductRepository.save(PromotionBuyProduct(promotionId = promotionId, productId = it))
         }
-        request.buyCategoryIds.orEmpty().forEach {
+        request.buyCategoryIds.orEmpty().distinct().forEach {
             promotionBuyCategoryRepository.save(PromotionBuyCategory(promotionId = promotionId, categoryId = it))
         }
-        request.rewardProductIds.orEmpty().forEach {
+        request.rewardProductIds.orEmpty().distinct().forEach {
             promotionRewardProductRepository.save(PromotionRewardProduct(promotionId = promotionId, productId = it))
         }
-        request.rewardCategoryIds.orEmpty().forEach {
+        request.rewardCategoryIds.orEmpty().distinct().forEach {
             promotionRewardCategoryRepository.save(PromotionRewardCategory(promotionId = promotionId, categoryId = it))
         }
         if (request.visibility?.uppercase() == "SPECIFIC_OUTLET") {
-            request.outletIds.orEmpty().forEach {
+            request.outletIds.orEmpty().distinct().forEach {
                 promotionOutletRepository.save(PromotionOutlet(promotionId = promotionId, outletId = it))
             }
         }
@@ -504,12 +503,117 @@ class PromotionService(
         require(missing.isEmpty()) { "Outlet tidak ditemukan di midware_master.merchant_outlets: ${missing.joinToString(",")}" }
     }
 
-    private fun clearBindings(promotionId: Long) {
-        promotionBuyProductRepository.deleteByPromotionId(promotionId)
-        promotionBuyCategoryRepository.deleteByPromotionId(promotionId)
-        promotionRewardProductRepository.deleteByPromotionId(promotionId)
-        promotionRewardCategoryRepository.deleteByPromotionId(promotionId)
-        promotionOutletRepository.deleteByPromotionId(promotionId)
+    private fun syncBindings(promotionId: Long, request: PromotionRequest) {
+        when (request.buyScope?.uppercase()) {
+            "PRODUCT" -> {
+                syncPromotionBuyProducts(promotionId, request.buyProductIds.orEmpty())
+                syncPromotionBuyCategories(promotionId, emptyList())
+            }
+            "CATEGORY" -> {
+                syncPromotionBuyProducts(promotionId, emptyList())
+                syncPromotionBuyCategories(promotionId, request.buyCategoryIds.orEmpty())
+            }
+            else -> {
+                syncPromotionBuyProducts(promotionId, emptyList())
+                syncPromotionBuyCategories(promotionId, emptyList())
+            }
+        }
+
+        when (request.rewardScope?.uppercase()) {
+            "PRODUCT" -> {
+                syncPromotionRewardProducts(promotionId, request.rewardProductIds.orEmpty())
+                syncPromotionRewardCategories(promotionId, emptyList())
+            }
+            "CATEGORY" -> {
+                syncPromotionRewardProducts(promotionId, emptyList())
+                syncPromotionRewardCategories(promotionId, request.rewardCategoryIds.orEmpty())
+            }
+            else -> {
+                syncPromotionRewardProducts(promotionId, emptyList())
+                syncPromotionRewardCategories(promotionId, emptyList())
+            }
+        }
+
+        if (request.visibility?.uppercase() == "SPECIFIC_OUTLET") {
+            syncPromotionOutlets(promotionId, request.outletIds.orEmpty())
+        } else {
+            syncPromotionOutlets(promotionId, emptyList())
+        }
+    }
+
+    private fun syncPromotionBuyProducts(promotionId: Long, requestedProductIds: List<Long>) {
+        val requestedIds = requestedProductIds.distinct()
+        val requestedIdSet = requestedIds.toSet()
+        val existingLinks = promotionBuyProductRepository.findByPromotionId(promotionId)
+        val existingIds = existingLinks.map { it.productId }.toSet()
+
+        val linksToRemove = existingLinks.filter { it.productId !in requestedIdSet }
+        if (linksToRemove.isNotEmpty()) promotionBuyProductRepository.deleteAll(linksToRemove)
+
+        val linksToAdd = requestedIds
+            .filter { it !in existingIds }
+            .map { PromotionBuyProduct(promotionId = promotionId, productId = it) }
+        if (linksToAdd.isNotEmpty()) promotionBuyProductRepository.saveAll(linksToAdd)
+    }
+
+    private fun syncPromotionBuyCategories(promotionId: Long, requestedCategoryIds: List<Long>) {
+        val requestedIds = requestedCategoryIds.distinct()
+        val requestedIdSet = requestedIds.toSet()
+        val existingLinks = promotionBuyCategoryRepository.findByPromotionId(promotionId)
+        val existingIds = existingLinks.map { it.categoryId }.toSet()
+
+        val linksToRemove = existingLinks.filter { it.categoryId !in requestedIdSet }
+        if (linksToRemove.isNotEmpty()) promotionBuyCategoryRepository.deleteAll(linksToRemove)
+
+        val linksToAdd = requestedIds
+            .filter { it !in existingIds }
+            .map { PromotionBuyCategory(promotionId = promotionId, categoryId = it) }
+        if (linksToAdd.isNotEmpty()) promotionBuyCategoryRepository.saveAll(linksToAdd)
+    }
+
+    private fun syncPromotionRewardProducts(promotionId: Long, requestedProductIds: List<Long>) {
+        val requestedIds = requestedProductIds.distinct()
+        val requestedIdSet = requestedIds.toSet()
+        val existingLinks = promotionRewardProductRepository.findByPromotionId(promotionId)
+        val existingIds = existingLinks.map { it.productId }.toSet()
+
+        val linksToRemove = existingLinks.filter { it.productId !in requestedIdSet }
+        if (linksToRemove.isNotEmpty()) promotionRewardProductRepository.deleteAll(linksToRemove)
+
+        val linksToAdd = requestedIds
+            .filter { it !in existingIds }
+            .map { PromotionRewardProduct(promotionId = promotionId, productId = it) }
+        if (linksToAdd.isNotEmpty()) promotionRewardProductRepository.saveAll(linksToAdd)
+    }
+
+    private fun syncPromotionRewardCategories(promotionId: Long, requestedCategoryIds: List<Long>) {
+        val requestedIds = requestedCategoryIds.distinct()
+        val requestedIdSet = requestedIds.toSet()
+        val existingLinks = promotionRewardCategoryRepository.findByPromotionId(promotionId)
+        val existingIds = existingLinks.map { it.categoryId }.toSet()
+
+        val linksToRemove = existingLinks.filter { it.categoryId !in requestedIdSet }
+        if (linksToRemove.isNotEmpty()) promotionRewardCategoryRepository.deleteAll(linksToRemove)
+
+        val linksToAdd = requestedIds
+            .filter { it !in existingIds }
+            .map { PromotionRewardCategory(promotionId = promotionId, categoryId = it) }
+        if (linksToAdd.isNotEmpty()) promotionRewardCategoryRepository.saveAll(linksToAdd)
+    }
+
+    private fun syncPromotionOutlets(promotionId: Long, requestedOutletIds: List<Long>) {
+        val requestedIds = requestedOutletIds.distinct()
+        val requestedIdSet = requestedIds.toSet()
+        val existingLinks = promotionOutletRepository.findByPromotionId(promotionId)
+        val existingIds = existingLinks.map { it.outletId }.toSet()
+
+        val linksToRemove = existingLinks.filter { it.outletId !in requestedIdSet }
+        if (linksToRemove.isNotEmpty()) promotionOutletRepository.deleteAll(linksToRemove)
+
+        val linksToAdd = requestedIds
+            .filter { it !in existingIds }
+            .map { PromotionOutlet(promotionId = promotionId, outletId = it) }
+        if (linksToAdd.isNotEmpty()) promotionOutletRepository.saveAll(linksToAdd)
     }
 
     private fun buildResponse(promo: Promotion): PromotionResponse = buildResponse(
