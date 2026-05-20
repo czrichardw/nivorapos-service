@@ -24,6 +24,8 @@ class RequestResponseLoggingFilter(
     entityManagerFactory: EntityManagerFactory,
     @Value("\${app.request-log.body-enabled:false}")
     private val bodyLoggingEnabled: Boolean,
+    @Value("\${app.request-log.error-body-enabled:true}")
+    private val errorBodyLoggingEnabled: Boolean,
     @Value("\${app.request-log.max-body-bytes:2048}")
     private val maxBodyLogBytes: Int
 ) : OncePerRequestFilter() {
@@ -45,7 +47,8 @@ class RequestResponseLoggingFilter(
         val clientIp = clientIp(request)
         val requestPath = request.requestURI
         val debugEnabled = log.isDebugEnabled
-        val bodyCaptureEnabled = debugEnabled && bodyLoggingEnabled
+        val fullBodyLoggingEnabled = debugEnabled && bodyLoggingEnabled
+        val bodyCaptureEnabled = fullBodyLoggingEnabled || errorBodyLoggingEnabled
 
         putRequestMdc(requestId, request.method, requestPath, clientIp)
         response.setHeader(REQUEST_ID_HEADER, requestId)
@@ -125,6 +128,7 @@ class RequestResponseLoggingFilter(
 
             try {
                 putAuthenticationMdc()
+                val bodyLoggingForThisRequest = bodyCaptureEnabled && shouldLogBody(status, failure, fullBodyLoggingEnabled)
                 logCompletion(
                     request = requestForChain,
                     requestId = requestId,
@@ -134,12 +138,16 @@ class RequestResponseLoggingFilter(
                     responseCopyDurationMs = responseCopyDurationMs,
                     hibernateStats = hibernateStats,
                     psgsStats = psgsStats,
-                    requestBody = if (bodyCaptureEnabled && requestForChain is ContentCachingRequestWrapper) {
-                        decodeAndTruncate(requestForChain.contentAsByteArray)
+                    requestBody = if (bodyLoggingForThisRequest && requestForChain is ContentCachingRequestWrapper) {
+                        sanitizeBody(decodeAndTruncate(requestForChain.contentAsByteArray))
                     } else {
                         null
                     },
-                    responseBody = if (bodyCaptureEnabled) decodeAndTruncate(responseBodySnapshot) else null,
+                    responseBody = if (bodyLoggingForThisRequest) {
+                        sanitizeBody(decodeAndTruncate(responseBodySnapshot))
+                    } else {
+                        null
+                    },
                     failure = failure
                 )
             } finally {
@@ -212,7 +220,9 @@ class RequestResponseLoggingFilter(
                 keyValue("client_ip", clientIp),
                 keyValue("user_name", userName),
                 keyValue("merchant_id", merchantId),
-                keyValue("exception_class", failure?.javaClass?.name)
+                keyValue("exception_class", failure?.javaClass?.name),
+                keyValue("request_body", requestBody),
+                keyValue("response_body", responseBody)
             )
         } else {
             log.info(
@@ -225,7 +235,9 @@ class RequestResponseLoggingFilter(
                 keyValue("outcome", outcome),
                 keyValue("client_ip", clientIp),
                 keyValue("user_name", userName),
-                keyValue("merchant_id", merchantId)
+                keyValue("merchant_id", merchantId),
+                keyValue("request_body", requestBody),
+                keyValue("response_body", responseBody)
             )
         }
     }
@@ -308,6 +320,21 @@ class RequestResponseLoggingFilter(
         return if (total > cap) "$text... (truncated, $total bytes total)" else text
     }
 
+    private fun shouldLogBody(status: Int, failure: Throwable?, fullBodyLoggingEnabled: Boolean): Boolean {
+        if (fullBodyLoggingEnabled) return true
+        return errorBodyLoggingEnabled && (status >= 400 || failure != null)
+    }
+
+    private fun sanitizeBody(body: String): String {
+        var sanitized = JSON_SECRET_FIELD_REGEX.replace(body) { match ->
+            "\"${match.groupValues[1]}\":\"$REDACTED\""
+        }
+        sanitized = FORM_SECRET_FIELD_REGEX.replace(sanitized) { match ->
+            "${match.groupValues[1]}=$REDACTED"
+        }
+        return sanitized
+    }
+
     private fun elapsedMs(startNano: Long): Long = (System.nanoTime() - startNano) / 1_000_000
 
     data class HibernateRequestStats(
@@ -325,6 +352,14 @@ class RequestResponseLoggingFilter(
         const val MDC_REQUEST_ID = "request_id"
         private const val REDACTED = "[REDACTED]"
         private val EMPTY_BYTES = ByteArray(0)
+        private val JSON_SECRET_FIELD_REGEX = Regex(
+            "\"([^\"]*(?:password|passwd|pwd|token|secret|authorization|credential|access[-_]?key|secret[-_]?key)[^\"]*)\"\\s*:\\s*\"(?:\\\\.|[^\"\\\\])*\"",
+            RegexOption.IGNORE_CASE
+        )
+        private val FORM_SECRET_FIELD_REGEX = Regex(
+            "\\b([^=\\s&]*(?:password|passwd|pwd|token|secret|authorization|credential|access[-_]?key|secret[-_]?key)[^=\\s&]*)=([^&\\s]+)",
+            RegexOption.IGNORE_CASE
+        )
         private val SENSITIVE_HEADERS = setOf(
             "authorization",
             "cookie",
