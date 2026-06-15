@@ -20,9 +20,6 @@ class Product(
     @Column(name = "name")
     var name: String = "",
 
-    @Column(name = "price", precision = 19, scale = 2)
-    var price: BigDecimal = BigDecimal.ZERO,
-
     @Column(name = "sku")
     var sku: String? = null,
 

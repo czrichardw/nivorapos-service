@@ -1,12 +1,12 @@
 package id.nivorapos.pos_service.security
 
-import id.nivorapos.pos_service.service.PsgsCachedAuth
 import id.nivorapos.pos_service.service.PsgsCredentialService
-import id.nivorapos.pos_service.service.PsgsPosProvisioningService
+import id.nivorapos.pos_service.service.PsgsCachedAuth
 import id.nivorapos.pos_service.service.PsgsTokenAuthCacheService
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
+import net.logstash.logback.argument.StructuredArguments.keyValue
 import org.slf4j.LoggerFactory
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
 import org.springframework.security.core.authority.SimpleGrantedAuthority
@@ -20,83 +20,101 @@ import org.springframework.web.filter.OncePerRequestFilter
 class JwtAuthenticationFilter(
     private val jwtUtil: JwtUtil,
     private val psgsCredentialService: PsgsCredentialService,
-    private val psgsPosProvisioningService: PsgsPosProvisioningService,
-    private val userDetailsService: UserDetailsServiceImpl,
     private val permissionResolver: PermissionResolver,
     private val psgsTokenAuthCacheService: PsgsTokenAuthCacheService
 ) : OncePerRequestFilter() {
 
     private val log = LoggerFactory.getLogger(JwtAuthenticationFilter::class.java)
 
-    companion object {
-        private val PSGS_DEFAULT_AUTHORITIES = listOf(
-            "PRODUCT_VIEW", "CATEGORY_VIEW", "STOCK_VIEW",
-            "TRANSACTION_VIEW", "TRANSACTION_CREATE", "TRANSACTION_UPDATE",
-            "REPORT_VIEW", "PAYMENT_SETTING"
-        )
-    }
-
     override fun doFilterInternal(
         request: HttpServletRequest,
         response: HttpServletResponse,
         filterChain: FilterChain
     ) {
-        val uri = "${request.method} ${request.requestURI}"
         val authHeader = request.getHeader("Authorization")
 
         if (authHeader.isNullOrBlank()) {
-            log.info("[AUTH] $uri — no Authorization header, proceeding as anonymous")
+            log.debug(
+                "authentication skipped",
+                keyValue("event_action", "auth_skipped"),
+                keyValue("reason", "missing_authorization_header")
+            )
             filterChain.doFilter(request, response)
             return
         }
 
         val token = if (authHeader.startsWith("Bearer ", ignoreCase = true)) authHeader.substring(7).trim() else authHeader.trim()
-        val tokenPreview = "${token.take(12)}..."
 
         if (SecurityContextHolder.getContext().authentication != null) {
             filterChain.doFilter(request, response)
             return
         }
 
-        log.info("[AUTH] $uri — Bearer token received: $tokenPreview")
-        log.info("[AUTH] $uri — attempting nivorapos JWT validation")
+        log.debug(
+            "authentication started",
+            keyValue("event_action", "auth_started"),
+            keyValue("auth_provider", "nivorapos_jwt")
+        )
 
         try {
             val username = jwtUtil.extractUsername(token)
 
             if (username.isNotBlank()) {
-                val userDetails = userDetailsService.loadUserByUsername(username)
-
                 if (jwtUtil.validateToken(token, username)) {
                     val merchantId = jwtUtil.extractMerchantId(token)
                     val authorities = permissionResolver.resolve(username, merchantId)
+                    val principal = User(username, "", authorities)
 
-                    val authToken = UsernamePasswordAuthenticationToken(userDetails, null, authorities)
+                    val authToken = UsernamePasswordAuthenticationToken(principal, null, authorities)
                     authToken.details = WebAuthenticationDetailsSource().buildDetails(request).let {
                         mapOf("merchantId" to merchantId, "webDetails" to it)
                     }
 
                     SecurityContextHolder.getContext().authentication = authToken
-                    log.info("[AUTH] $uri — nivorapos JWT valid, authenticated as '$username' merchantId=$merchantId authorities=$authorities")
+                    log.debug(
+                        "authentication succeeded",
+                        keyValue("event_action", "auth_succeeded"),
+                        keyValue("auth_provider", "nivorapos_jwt"),
+                        keyValue("user_name", username),
+                        keyValue("merchant_id", merchantId)
+                    )
                 } else {
-                    log.warn("[AUTH] $uri — nivorapos JWT signature/expiry invalid for username='$username', falling back to PSGS")
-                    tryAuthenticateWithPsgsSession(token, uri, request)
+                    log.warn(
+                        "nivorapos jwt rejected; falling back to psgs",
+                        keyValue("event_action", "auth_fallback"),
+                        keyValue("auth_provider", "nivorapos_jwt"),
+                        keyValue("user_name", username)
+                    )
+                    tryAuthenticateWithPsgsSession(token, request)
                 }
             } else {
-                log.warn("[AUTH] $uri — nivorapos JWT parsed but username is blank, falling back to PSGS")
-                tryAuthenticateWithPsgsSession(token, uri, request)
+                log.warn(
+                    "nivorapos jwt rejected; falling back to psgs",
+                    keyValue("event_action", "auth_fallback"),
+                    keyValue("reason", "blank_username")
+                )
+                tryAuthenticateWithPsgsSession(token, request)
             }
         } catch (e: Exception) {
-            log.info("[AUTH] $uri — nivorapos JWT parse failed (${e.message}), falling back to PSGS session lookup")
-            tryAuthenticateWithPsgsSession(token, uri, request)
+            log.debug(
+                "nivorapos jwt parse failed; falling back to psgs",
+                keyValue("event_action", "auth_fallback"),
+                keyValue("exception_class", e.javaClass.name),
+                keyValue("exception_message", e.message)
+            )
+            tryAuthenticateWithPsgsSession(token, request)
         }
 
         filterChain.doFilter(request, response)
     }
 
-    private fun tryAuthenticateWithPsgsSession(token: String, uri: String, request: HttpServletRequest) {
+    private fun tryAuthenticateWithPsgsSession(token: String, request: HttpServletRequest) {
         if (!psgsCredentialService.isEnabled()) {
-            log.warn("[AUTH] $uri — PSGS integration is disabled (psgs.integration.enabled=false), cannot authenticate token")
+            log.warn(
+                "psgs authentication unavailable",
+                keyValue("event_action", "auth_rejected"),
+                keyValue("reason", "psgs_integration_disabled")
+            )
             return
         }
 
@@ -109,58 +127,113 @@ class JwtAuthenticationFilter(
             authenticatePsgs(cachedAuth, request)
             val touchStart = System.nanoTime()
             psgsTokenAuthCacheService.touchLastUsed(tokenHash)
-            log.info("[AUTH-CACHE] $uri — HIT username='${cachedAuth.username}' merchantId=${cachedAuth.merchantId} lookup=${cacheLookupMs}ms touch=${elapsedMs(touchStart)}ms")
+            log.debug(
+                "psgs auth cache hit",
+                keyValue("event_action", "auth_cache_hit"),
+                keyValue("user_name", cachedAuth.username),
+                keyValue("merchant_id", cachedAuth.merchantId),
+                keyValue("lookup_ms", cacheLookupMs),
+                keyValue("touch_ms", elapsedMs(touchStart))
+            )
             return
         }
 
-        log.info("[AUTH-CACHE] $uri — MISS lookup=${cacheLookupMs}ms tokenHash=${tokenHash.take(12)}...")
-        log.info("[AUTH] $uri — querying midware_master.mobile_app_user_session for token: ${token.take(12)}...")
+        log.debug(
+            "psgs auth cache miss",
+            keyValue("event_action", "auth_cache_miss"),
+            keyValue("lookup_ms", cacheLookupMs),
+            keyValue("token_hash_prefix", tokenHash.take(12))
+        )
+        log.debug(
+            "psgs session lookup started",
+            keyValue("event_action", "psgs_session_lookup_started"),
+            keyValue("token_hash_prefix", tokenHash.take(12))
+        )
 
         try {
             val mysqlLookupStart = System.nanoTime()
             val session = psgsCredentialService.findSessionByToken(token)
             val mysqlLookupMs = elapsedMs(mysqlLookupStart)
             if (session == null) {
-                log.warn("[AUTH] $uri — token NOT FOUND in midware_master.mobile_app_user_session mysqlLookup=${mysqlLookupMs}ms — authentication rejected")
+                log.warn(
+                    "psgs authentication rejected",
+                    keyValue("event_action", "auth_rejected"),
+                    keyValue("reason", "psgs_session_not_found")
+                )
                 return
             }
-            log.info("[AUTH] $uri — session found for username='${session.username}' hit_from='${session.hitFrom}' updated_at=${session.updateAt} mysqlLookup=${mysqlLookupMs}ms")
+            log.debug(
+                "psgs session found",
+                keyValue("event_action", "psgs_session_found"),
+                keyValue("user_name", session.username),
+                keyValue("hit_from", session.hitFrom),
+                keyValue("session_updated_at", session.updateAt),
+                keyValue("mysql_lookup_ms", mysqlLookupMs)
+            )
 
             val credential = psgsCredentialService.credentialFromSession(session)
             if (credential == null) {
-                log.warn("[AUTH] $uri — session found but user/merchant lookup returned null for username='${session.username}' — user may be deleted or missing merchant_id")
+                log.warn(
+                    "psgs authentication rejected",
+                    keyValue("event_action", "auth_rejected"),
+                    keyValue("reason", "missing_user_or_merchant"),
+                    keyValue("user_name", session.username)
+                )
                 return
             }
 
-            val provisioningStart = System.nanoTime()
-            val provisioned = psgsPosProvisioningService.provision(credential)
             val merchantId = credential.merchant.id
-            log.info("[AUTH] $uri — credential resolved and provisioned: username='${session.username}' psgsMerchantId=$merchantId posMerchantId=${provisioned.merchant.id} merchantName='${provisioned.merchant.name}' provisioning=${elapsedMs(provisioningStart)}ms")
+            val merchantName = credential.merchant.dba?.takeIf { it.isNotBlank() } ?: credential.merchant.name
+            log.debug(
+                "psgs credential resolved",
+                keyValue("event_action", "psgs_credential_resolved"),
+                keyValue("user_name", session.username),
+                keyValue("merchant_id", merchantId),
+                keyValue("merchant_name", merchantName)
+            )
             val authorityCodes = permissionResolver.resolve(session.username, merchantId)
                 .map { it.authority }
-                .ifEmpty { PSGS_DEFAULT_AUTHORITIES }
+                .ifEmpty { PsgsAuthorityService.DEFAULT_POS_AUTHORITIES }
 
-            val cached = PsgsCachedAuth(
+            val auth = PsgsCachedAuth(
                 username = session.username,
                 merchantId = merchantId,
-                merchantName = provisioned.merchant.name ?: credential.merchant.name,
+                merchantName = merchantName,
                 hitFrom = session.hitFrom,
                 sessionUpdateAt = session.updateAt,
                 authorities = authorityCodes,
                 expiresAt = psgsTokenAuthCacheService.expiresAt(token)
             )
-            authenticatePsgs(cached, request)
+            authenticatePsgs(auth, request)
 
             val upsertStart = System.nanoTime()
             psgsTokenAuthCacheService.upsert(
                 tokenHash = tokenHash,
-                auth = cached,
+                auth = auth,
                 metadata = """{"source":"psgs_mysql_fallback"}"""
             )
-            log.info("[AUTH-CACHE] $uri — UPSERT username='${session.username}' merchantId=$merchantId expiresAt=${cached.expiresAt} duration=${elapsedMs(upsertStart)}ms")
-            log.info("[AUTH] $uri — PSGS authentication SUCCESS for username='${session.username}' merchantId=$merchantId")
+            log.debug(
+                "psgs auth cache upserted",
+                keyValue("event_action", "auth_cache_upserted"),
+                keyValue("user_name", session.username),
+                keyValue("merchant_id", merchantId),
+                keyValue("duration_ms", elapsedMs(upsertStart))
+            )
+            log.debug(
+                "authentication succeeded",
+                keyValue("event_action", "auth_succeeded"),
+                keyValue("auth_provider", "psgs_session"),
+                keyValue("user_name", session.username),
+                keyValue("merchant_id", merchantId)
+            )
         } catch (e: Exception) {
-            log.error("[AUTH] $uri — PSGS session authentication threw an exception: ${e.javaClass.simpleName}: ${e.message}", e)
+            log.error(
+                "psgs authentication failed",
+                keyValue("event_action", "auth_error"),
+                keyValue("exception_class", e.javaClass.name),
+                keyValue("exception_message", e.message),
+                e
+            )
         }
     }
 

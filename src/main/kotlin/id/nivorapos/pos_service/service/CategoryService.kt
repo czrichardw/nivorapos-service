@@ -67,10 +67,11 @@ class CategoryService(
 
         val category = categoryRepository.findByMerchantIdAndId(merchantId, request.id)
             .orElseThrow { RuntimeException("Category not found") }
+        request.name?.let { require(it.isNotBlank()) { "name wajib diisi" } }
 
-        category.name = request.name
-        category.image = request.image
-        category.description = request.description
+        category.name = request.name ?: category.name
+        category.image = request.image ?: category.image
+        category.description = request.description ?: category.description
         category.modifiedBy = username
         category.modifiedDate = now
 

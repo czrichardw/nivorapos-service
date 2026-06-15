@@ -2,6 +2,7 @@ package id.nivorapos.pos_service.service
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import id.nivorapos.pos_service.config.PsgsJdbcLoggingDataSource
 import jakarta.annotation.PreDestroy
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.security.crypto.password.PasswordEncoder
@@ -11,6 +12,7 @@ import java.sql.ResultSet
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.Base64
+import javax.sql.DataSource
 
 @Service
 class PsgsCredentialService(
@@ -28,30 +30,46 @@ class PsgsCredentialService(
     private val masterSchema: String,
     @Value("\${psgs.login.require-password:false}")
     private val requireLoginPassword: Boolean,
+    @Value("\${app.psgs-jdbc-log.enabled:false}")
+    private val psgsJdbcLogEnabled: Boolean,
+    @Value("\${app.psgs-jdbc-log.slow-threshold-ms:50}")
+    private val psgsSlowQueryThresholdMs: Long,
     private val passwordEncoder: PasswordEncoder
 ) {
 
     fun isEnabled(): Boolean = integrationEnabled && url.isNotBlank()
 
-    private val psgsDataSource: HikariDataSource? by lazy {
+    private val psgsDataSourceDelegate: Lazy<DataSource?> = lazy {
         if (!isEnabled()) null
-        else HikariDataSource(HikariConfig().apply {
-            jdbcUrl = url
-            username = this@PsgsCredentialService.username
-            password = this@PsgsCredentialService.password
-            driverClassName = this@PsgsCredentialService.driverClassName
-            maximumPoolSize = 5
-            minimumIdle = 1
-            connectionTimeout = 10_000
-            validationTimeout = 5_000
-            idleTimeout = 300_000
-            maxLifetime = 600_000
-        })
+        else {
+            val hikariDataSource = HikariDataSource(HikariConfig().apply {
+                jdbcUrl = url
+                username = this@PsgsCredentialService.username
+                password = this@PsgsCredentialService.password
+                driverClassName = this@PsgsCredentialService.driverClassName
+                maximumPoolSize = 5
+                minimumIdle = 1
+                connectionTimeout = 10_000
+                validationTimeout = 5_000
+                idleTimeout = 300_000
+                maxLifetime = 600_000
+            })
+            if (psgsJdbcLogEnabled) {
+                PsgsJdbcLoggingDataSource(hikariDataSource, psgsSlowQueryThresholdMs.coerceAtLeast(0))
+            } else {
+                hikariDataSource
+            }
+        }
     }
+
+    private val psgsDataSource: DataSource?
+        get() = psgsDataSourceDelegate.value
 
     @PreDestroy
     fun cleanup() {
-        psgsDataSource?.close()
+        if (psgsDataSourceDelegate.isInitialized()) {
+            (psgsDataSourceDelegate.value as? AutoCloseable)?.close()
+        }
     }
 
     fun authenticate(login: String, rawPassword: String): PsgsCredential? {
@@ -121,6 +139,60 @@ class PsgsCredentialService(
         }
     }
 
+    fun findMerchant(merchantId: Long): PsgsMerchant? {
+        if (!isEnabled()) return null
+        validateSchemaName(masterSchema)
+        connection().use { conn ->
+            return findMerchantById(conn, merchantId)
+        }
+    }
+
+    fun findUser(login: String): PsgsUser? {
+        if (!isEnabled()) return null
+        validateSchemaName(masterSchema)
+        connection().use { conn ->
+            return findMobileAppUsersByLogin(conn, login).ifEmpty {
+                findUsersByLogin(conn, login)
+            }.firstOrNull {
+                it.enabled != false && it.deletedAt == null && it.merchantId != null
+            }
+        }
+    }
+
+    fun findOutletsByMerchantId(merchantId: Long): List<PsgsOutlet> {
+        if (!isEnabled()) return emptyList()
+        validateSchemaName(masterSchema)
+        connection().use { conn ->
+            val sql = """
+                select id, merchant_id, name, street, phone
+                from $masterSchema.merchant_outlets
+                where merchant_id = ?
+                order by id asc
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use { stmt ->
+                stmt.setLong(1, merchantId)
+                stmt.executeQuery().use { rs -> return rs.toPsgsOutlets() }
+            }
+        }
+    }
+
+    fun findUserGroups(): List<PsgsUserGroup> {
+        if (!isEnabled()) return emptyList()
+        validateSchemaName(masterSchema)
+        connection().use { conn ->
+            val sql = """
+                select id, name, roles
+                from $masterSchema.user_group
+                order by id asc
+            """.trimIndent()
+
+            conn.prepareStatement(sql).use { stmt ->
+                stmt.executeQuery().use { rs -> return rs.toPsgsUserGroups() }
+            }
+        }
+    }
+
     private fun connection(): Connection = psgsDataSource?.connection
         ?: throw IllegalStateException("PSGS datasource not initialized")
 
@@ -156,7 +228,9 @@ class PsgsCredentialService(
         }
     }
 
-    private fun findMerchant(conn: Connection, merchantId: Long): PsgsMerchant? {
+    private fun findMerchant(conn: Connection, merchantId: Long): PsgsMerchant? = findMerchantById(conn, merchantId)
+
+    private fun findMerchantById(conn: Connection, merchantId: Long): PsgsMerchant? {
         val sql = """
             select id, name, dba, merchant_unique_code, address1, address2, phone_office, pic_mobile_phone,
                    pic_email, is_pos_enable, deleted_at
@@ -275,6 +349,36 @@ class PsgsCredentialService(
         )
     }
 
+    private fun ResultSet.toPsgsOutlets(): List<PsgsOutlet> {
+        val outlets = mutableListOf<PsgsOutlet>()
+        while (next()) {
+            outlets.add(
+                PsgsOutlet(
+                    id = getLong("id"),
+                    merchantId = getLong("merchant_id"),
+                    name = getString("name"),
+                    address = getString("street"),
+                    phone = getString("phone")
+                )
+            )
+        }
+        return outlets
+    }
+
+    private fun ResultSet.toPsgsUserGroups(): List<PsgsUserGroup> {
+        val groups = mutableListOf<PsgsUserGroup>()
+        while (next()) {
+            groups.add(
+                PsgsUserGroup(
+                    id = getLong("id"),
+                    name = getString("name"),
+                    roles = getString("roles")
+                )
+            )
+        }
+        return groups
+    }
+
     private fun ResultSet.getNullableLong(column: String): Long? {
         val value = getLong(column)
         return if (wasNull()) null else value
@@ -349,6 +453,20 @@ data class PsgsMerchant(
     val email: String?,
     val isPosEnabled: Boolean?,
     val deletedAt: String?
+)
+
+data class PsgsOutlet(
+    val id: Long,
+    val merchantId: Long,
+    val name: String?,
+    val address: String?,
+    val phone: String?
+)
+
+data class PsgsUserGroup(
+    val id: Long,
+    val name: String,
+    val roles: String
 )
 
 data class PsgsMobileAppUserSession(

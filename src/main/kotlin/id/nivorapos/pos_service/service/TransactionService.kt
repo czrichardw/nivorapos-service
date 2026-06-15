@@ -323,7 +323,7 @@ class TransactionService(
 
         val previousStatus = transaction.status
         val effectiveStatusForStock = request.paymentStatus ?: request.status
-        transaction.status = request.status
+        transaction.status = request.status ?: transaction.status
         if (request.cashTendered != null) transaction.cashTendered = parseBD(request.cashTendered)
         if (request.cashChange != null) transaction.cashChange = parseBD(request.cashChange)
         transaction.modifiedBy = username
@@ -335,7 +335,7 @@ class TransactionService(
         if (payments.isNotEmpty()) {
             val payment = payments.first()
             val effectiveStatus = request.paymentStatus ?: request.status
-            payment.status = effectiveStatus
+            if (effectiveStatus != null) payment.status = effectiveStatus
             if (request.paymentReference != null) payment.paymentReference = request.paymentReference
             if (request.paymentTrxId != null) payment.paymentTrxId = request.paymentTrxId
             if (request.paymentMethod != null) payment.paymentMethod = request.paymentMethod
@@ -350,9 +350,9 @@ class TransactionService(
         }
 
         when {
-            !isPaidStatus(previousStatus) && isPaidStatus(effectiveStatusForStock) ->
+            effectiveStatusForStock != null && !isPaidStatus(previousStatus) && isPaidStatus(effectiveStatusForStock) ->
                 reduceStockForTransaction(transaction, username, now)
-            isFailedOrCancelledStatus(effectiveStatusForStock) ->
+            effectiveStatusForStock != null && isFailedOrCancelledStatus(effectiveStatusForStock) ->
                 restoreStockForTransaction(transaction, username, now)
         }
 
@@ -496,7 +496,7 @@ class TransactionService(
         val isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true
         val hundred = BigDecimal("100")
 
-        log.info("[VALIDATE] merchantId=$merchantId paymentMethod=${request.paymentMethod} isPriceIncludeTax=$isPriceIncludeTax items=${request.items.size}")
+        log.debug("[VALIDATE] merchantId=$merchantId paymentMethod=${request.paymentMethod} isPriceIncludeTax=$isPriceIncludeTax items=${request.items.size}")
 
         var calculatedSubTotal = BigDecimal.ZERO
         var calculatedTotalTax = BigDecimal.ZERO
@@ -517,7 +517,7 @@ class TransactionService(
                         itemTotalPrice.multiply(tax.percentage)
                             .divide(hundred, 2, RoundingMode.HALF_UP)
                     }
-                    log.info("[VALIDATE] item productId=${itemReq.productId} qty=${itemReq.qty} price=${itemReq.price} totalPrice=$itemTotalPrice taxPct=${tax.percentage} expectedTax=$expectedTaxAmount clientTax=$clientTaxAmount")
+                    log.debug("[VALIDATE] item productId=${itemReq.productId} qty=${itemReq.qty} price=${itemReq.price} totalPrice=$itemTotalPrice taxPct=${tax.percentage} expectedTax=$expectedTaxAmount clientTax=$clientTaxAmount")
                     if (clientTaxAmount.subtract(expectedTaxAmount).abs() > tolerance) {
                         log.warn("[VALIDATE] FAIL taxAmount productId=${itemReq.productId}: expected=$expectedTaxAmount got=$clientTaxAmount")
                         return Pair(
@@ -527,23 +527,23 @@ class TransactionService(
                     }
                     calculatedTotalTax = calculatedTotalTax.add(expectedTaxAmount)
                 } else {
-                    log.info("[VALIDATE] item productId=${itemReq.productId} no tax (taxId=${itemReq.taxId} pct=${tax?.percentage})")
+                    log.debug("[VALIDATE] item productId=${itemReq.productId} no tax (taxId=${itemReq.taxId} pct=${tax?.percentage})")
                 }
             } else {
-                log.info("[VALIDATE] item productId=${itemReq.productId} no taxId, using clientTaxAmount=$clientTaxAmount")
+                log.debug("[VALIDATE] item productId=${itemReq.productId} no taxId, using clientTaxAmount=$clientTaxAmount")
                 calculatedTotalTax = calculatedTotalTax.add(clientTaxAmount)
             }
         }
 
         val clientSubTotal = parseBD(request.subTotal)
-        log.info("[VALIDATE] subTotal: calculated=$calculatedSubTotal client=$clientSubTotal")
+        log.debug("[VALIDATE] subTotal: calculated=$calculatedSubTotal client=$clientSubTotal")
         if (clientSubTotal.subtract(calculatedSubTotal).abs() > tolerance) {
             log.warn("[VALIDATE] FAIL subTotal: expected=$calculatedSubTotal got=$clientSubTotal")
             return Pair("subTotal mismatch: expected $calculatedSubTotal, got $clientSubTotal", null)
         }
 
         val clientTotalTax = parseBD(request.totalTax)
-        log.info("[VALIDATE] totalTax: calculated=$calculatedTotalTax client=$clientTotalTax")
+        log.debug("[VALIDATE] totalTax: calculated=$calculatedTotalTax client=$clientTotalTax")
         if (clientTotalTax.subtract(calculatedTotalTax).abs() > tolerance) {
             log.warn("[VALIDATE] FAIL totalTax: expected=$calculatedTotalTax got=$clientTotalTax")
             return Pair("totalTax mismatch: expected $calculatedTotalTax, got $clientTotalTax", null)
@@ -578,7 +578,7 @@ class TransactionService(
             BigDecimal.ZERO
         }
         val clientServiceCharge = parseBD(request.totalServiceCharge)
-        log.info("[VALIDATE] serviceCharge: isServiceCharge=${paymentSetting?.isServiceCharge} source=${paymentSetting?.serviceChargeSource} pct=${paymentSetting?.serviceChargePercentage} amt=${paymentSetting?.serviceChargeAmount} expected=$expectedServiceCharge client=$clientServiceCharge")
+        log.debug("[VALIDATE] serviceCharge: isServiceCharge=${paymentSetting?.isServiceCharge} source=${paymentSetting?.serviceChargeSource} pct=${paymentSetting?.serviceChargePercentage} amt=${paymentSetting?.serviceChargeAmount} expected=$expectedServiceCharge client=$clientServiceCharge")
         if (clientServiceCharge.subtract(expectedServiceCharge).abs() > tolerance) {
             log.warn("[VALIDATE] FAIL serviceCharge: expected=$expectedServiceCharge got=$clientServiceCharge")
             return Pair("totalServiceCharge mismatch: expected $expectedServiceCharge, got $clientServiceCharge", null)
@@ -591,7 +591,7 @@ class TransactionService(
         } else {
             netAfterDiscount.add(calculatedTotalTax).add(expectedServiceCharge)
         }
-        log.info("[VALIDATE] preRoundTotal=$preRoundTotal (isPriceIncludeTax=$isPriceIncludeTax)")
+        log.debug("[VALIDATE] preRoundTotal=$preRoundTotal (isPriceIncludeTax=$isPriceIncludeTax)")
 
         // Compute rounding from DB — only applies to CASH payments
         val isCashPayment = request.paymentMethod?.uppercase() == "CASH"
@@ -601,7 +601,7 @@ class TransactionService(
             BigDecimal.ZERO
         }
         val clientRounding = parseBD(request.totalRounding)
-        log.info("[VALIDATE] rounding: isCash=$isCashPayment isRounding=${paymentSetting?.isRounding} target=${paymentSetting?.roundingTarget} type=${paymentSetting?.roundingType} expected=$expectedRounding client=$clientRounding")
+        log.debug("[VALIDATE] rounding: isCash=$isCashPayment isRounding=${paymentSetting?.isRounding} target=${paymentSetting?.roundingTarget} type=${paymentSetting?.roundingType} expected=$expectedRounding client=$clientRounding")
         if (clientRounding.subtract(expectedRounding).abs() > tolerance) {
             log.warn("[VALIDATE] FAIL rounding: expected=$expectedRounding got=$clientRounding")
             return Pair("totalRounding mismatch: expected $expectedRounding, got $clientRounding", null)
@@ -609,12 +609,12 @@ class TransactionService(
 
         val expectedTotalAmount = preRoundTotal.add(expectedRounding)
         val clientTotalAmount = parseBD(request.totalAmount)
-        log.info("[VALIDATE] totalAmount: expected=$expectedTotalAmount client=$clientTotalAmount")
+        log.debug("[VALIDATE] totalAmount: expected=$expectedTotalAmount client=$clientTotalAmount")
         if (clientTotalAmount.subtract(expectedTotalAmount).abs() > tolerance) {
             log.warn("[VALIDATE] FAIL totalAmount: expected=$expectedTotalAmount got=$clientTotalAmount")
             return Pair("totalAmount mismatch: expected $expectedTotalAmount, got $clientTotalAmount", null)
         }
-        log.info("[VALIDATE] OK — all amounts valid")
+        log.debug("[VALIDATE] OK - all amounts valid")
 
         return Pair(null, ComputedAmounts(
             subTotal = calculatedSubTotal,

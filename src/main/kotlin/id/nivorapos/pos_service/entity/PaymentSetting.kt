@@ -39,18 +39,6 @@ class PaymentSetting(
     @Column(name = "service_charge_source")
     var serviceChargeSource: String? = null,
 
-    @Column(name = "is_tax")
-    var isTax: Boolean = false,
-
-    @Column(name = "tax_percentage", precision = 10, scale = 2)
-    var taxPercentage: BigDecimal = BigDecimal.ZERO,
-
-    @Column(name = "tax_name")
-    var taxName: String? = null,
-
-    @Column(name = "tax_mode")
-    var taxMode: String? = null,
-
     @Column(name = "created_by")
     var createdBy: String? = null,
 

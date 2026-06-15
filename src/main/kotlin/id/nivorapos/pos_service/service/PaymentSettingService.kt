@@ -19,11 +19,13 @@ class PaymentSettingService(
     private val paymentSettingRepository: PaymentSettingRepository,
     private val merchantPaymentMethodRepository: MerchantPaymentMethodRepository,
     private val paymentMethodRepository: PaymentMethodRepository,
-    private val productService: ProductService
+    private val productService: ProductService,
+    private val posMerchantDefaultsService: PosMerchantDefaultsService
 ) {
 
     fun get(): ApiResponse<PaymentSettingResponse> {
         val merchantId = SecurityUtils.getMerchantIdFromContext()
+        posMerchantDefaultsService.ensureForMerchant(merchantId, SecurityUtils.getUsernameFromContext())
         val setting = paymentSettingRepository.findByMerchantId(merchantId)
             .orElseThrow { RuntimeException("Payment setting not found for merchant $merchantId") }
         return ApiResponse.success("Payment setting retrieved", setting.toResponse())
@@ -35,34 +37,20 @@ class PaymentSettingService(
         val username = SecurityUtils.getUsernameFromContext()
         val now = LocalDateTime.now()
 
-        if (paymentSettingRepository.findByMerchantId(merchantId).isPresent) {
-            throw RuntimeException("Payment setting already exists for this merchant. Use update instead.")
+        posMerchantDefaultsService.ensureForMerchant(merchantId, username)
+        val setting = paymentSettingRepository.findByMerchantId(merchantId).orElseGet {
+            PaymentSetting(
+                merchantId = merchantId,
+                createdBy = username,
+                createdDate = now
+            )
         }
-
-        validateRequest(request)
-
-        val setting = PaymentSetting(
-            merchantId = merchantId,
-            isPriceIncludeTax = request.isPriceIncludeTax,
-            isRounding = request.isRounding,
-            roundingTarget = request.roundingTarget,
-            roundingType = request.roundingType,
-            isServiceCharge = request.isServiceCharge,
-            serviceChargePercentage = request.serviceChargePercentage,
-            serviceChargeAmount = request.serviceChargeAmount,
-            serviceChargeSource = request.serviceChargeSource?.uppercase(),
-            isTax = request.isTax,
-            taxPercentage = request.taxPercentage,
-            taxName = request.taxName,
-            taxMode = request.taxMode,
-            createdBy = username,
-            createdDate = now,
-            modifiedBy = username,
-            modifiedDate = now
-        )
+        val merged = mergeRequest(setting, request)
+        validateRequest(merged)
+        applyRequest(setting, merged, username, now)
         val saved = paymentSettingRepository.save(setting)
         productService.recalculateMerchantPrices(merchantId)
-        return ApiResponse.success("Payment setting created", saved.toResponse())
+        return ApiResponse.success("Payment setting saved", saved.toResponse())
     }
 
     @Transactional
@@ -71,25 +59,13 @@ class PaymentSettingService(
         val username = SecurityUtils.getUsernameFromContext()
         val now = LocalDateTime.now()
 
+        posMerchantDefaultsService.ensureForMerchant(merchantId, username)
         val setting = paymentSettingRepository.findByMerchantId(merchantId)
             .orElseThrow { RuntimeException("Payment setting not found") }
 
-        validateRequest(request)
-
-        setting.isPriceIncludeTax = request.isPriceIncludeTax
-        setting.isRounding = request.isRounding
-        setting.roundingTarget = request.roundingTarget
-        setting.roundingType = request.roundingType
-        setting.isServiceCharge = request.isServiceCharge
-        setting.serviceChargePercentage = request.serviceChargePercentage
-        setting.serviceChargeAmount = request.serviceChargeAmount
-        setting.serviceChargeSource = request.serviceChargeSource?.uppercase()
-        setting.isTax = request.isTax
-        setting.taxPercentage = request.taxPercentage
-        setting.taxName = request.taxName
-        setting.taxMode = request.taxMode
-        setting.modifiedBy = username
-        setting.modifiedDate = now
+        val merged = mergeRequest(setting, request)
+        validateRequest(merged)
+        applyRequest(setting, merged, username, now)
 
         val saved = paymentSettingRepository.save(setting)
         productService.recalculateMerchantPrices(merchantId)
@@ -98,6 +74,7 @@ class PaymentSettingService(
 
     fun getPaymentMethods(): ApiResponse<PaymentMethodListResponse> {
         val merchantId = SecurityUtils.getMerchantIdFromContext()
+        posMerchantDefaultsService.ensureForMerchant(merchantId, SecurityUtils.getUsernameFromContext())
         val merchantMethods = merchantPaymentMethodRepository.findByMerchantIdAndIsEnabledTrue(merchantId)
 
         val methodMap = paymentMethodRepository.findAll().associateBy { it.id }
@@ -135,15 +112,18 @@ class PaymentSettingService(
     }
 
     private fun validateRequest(request: PaymentSettingRequest) {
-        if (request.isServiceCharge) {
-            val hasPct = request.serviceChargePercentage > java.math.BigDecimal.ZERO
-            val hasAmt = request.serviceChargeAmount > java.math.BigDecimal.ZERO
+        val isServiceCharge = request.isServiceCharge == true
+        val serviceChargePercentage = request.serviceChargePercentage ?: java.math.BigDecimal.ZERO
+        val serviceChargeAmount = request.serviceChargeAmount ?: java.math.BigDecimal.ZERO
+        if (isServiceCharge) {
+            val hasPct = serviceChargePercentage > java.math.BigDecimal.ZERO
+            val hasAmt = serviceChargeAmount > java.math.BigDecimal.ZERO
             require(hasPct || hasAmt) {
                 "serviceChargePercentage atau serviceChargeAmount wajib diisi jika isServiceCharge = true"
             }
             if (hasPct) {
-                require(request.serviceChargePercentage >= java.math.BigDecimal("0.01") &&
-                        request.serviceChargePercentage <= java.math.BigDecimal("100")) {
+                require(serviceChargePercentage >= java.math.BigDecimal("0.01") &&
+                        serviceChargePercentage <= java.math.BigDecimal("100")) {
                     "serviceChargePercentage harus antara 0.01 dan 100"
                 }
             }
@@ -152,18 +132,43 @@ class PaymentSettingService(
                 "serviceChargeSource wajib diisi dengan BEFORE_TAX, AFTER_TAX, DPP, atau AFTER_DISCOUNT"
             }
         }
-        if (request.isRounding) {
-            require(request.roundingTarget > 0) { "roundingTarget harus > 0 jika isRounding = true" }
+        val isRounding = request.isRounding == true
+        val roundingTarget = request.roundingTarget ?: 0
+        if (isRounding) {
+            require(roundingTarget > 0) { "roundingTarget harus > 0 jika isRounding = true" }
             require(request.roundingType != null && request.roundingType.uppercase() in listOf("FLOOR", "CEIL", "ROUND")) {
                 "roundingType harus FLOOR, CEIL, atau ROUND"
             }
         }
-        if (request.isTax) {
-            require(request.taxPercentage >= java.math.BigDecimal("0.01") &&
-                    request.taxPercentage <= java.math.BigDecimal("100")) {
-                "taxPercentage harus antara 0.01 dan 100 jika isTax = true"
-            }
-        }
+    }
+
+    private fun mergeRequest(setting: PaymentSetting, request: PaymentSettingRequest) = PaymentSettingRequest(
+        isPriceIncludeTax = request.isPriceIncludeTax ?: setting.isPriceIncludeTax,
+        isRounding = request.isRounding ?: setting.isRounding,
+        roundingTarget = request.roundingTarget ?: setting.roundingTarget,
+        roundingType = request.roundingType ?: setting.roundingType,
+        isServiceCharge = request.isServiceCharge ?: setting.isServiceCharge,
+        serviceChargePercentage = request.serviceChargePercentage ?: setting.serviceChargePercentage,
+        serviceChargeAmount = request.serviceChargeAmount ?: setting.serviceChargeAmount,
+        serviceChargeSource = request.serviceChargeSource ?: setting.serviceChargeSource
+    )
+
+    private fun applyRequest(
+        setting: PaymentSetting,
+        request: PaymentSettingRequest,
+        username: String,
+        now: LocalDateTime
+    ) {
+        setting.isPriceIncludeTax = request.isPriceIncludeTax ?: setting.isPriceIncludeTax
+        setting.isRounding = request.isRounding ?: setting.isRounding
+        setting.roundingTarget = request.roundingTarget ?: setting.roundingTarget
+        setting.roundingType = request.roundingType ?: setting.roundingType
+        setting.isServiceCharge = request.isServiceCharge ?: setting.isServiceCharge
+        setting.serviceChargePercentage = request.serviceChargePercentage ?: setting.serviceChargePercentage
+        setting.serviceChargeAmount = request.serviceChargeAmount ?: setting.serviceChargeAmount
+        setting.serviceChargeSource = request.serviceChargeSource?.uppercase() ?: setting.serviceChargeSource
+        setting.modifiedBy = username
+        setting.modifiedDate = now
     }
 
     private fun PaymentSetting.toResponse() = PaymentSettingResponse(
@@ -177,10 +182,6 @@ class PaymentSettingService(
         serviceChargePercentage = serviceChargePercentage,
         serviceChargeAmount = serviceChargeAmount,
         serviceChargeSource = serviceChargeSource,
-        isTax = isTax,
-        taxPercentage = taxPercentage,
-        taxName = taxName,
-        taxMode = taxMode,
         createdBy = createdBy,
         createdDate = createdDate,
         modifiedBy = modifiedBy,

@@ -4,21 +4,21 @@ import java.math.BigDecimal
 import java.time.LocalDateTime
 
 data class DiscountRequest(
-    val name: String,
+    val name: String? = null,
     val code: String? = null,
-    val valueType: String,             // PERCENTAGE | AMOUNT
-    val value: BigDecimal,
+    val valueType: String? = null,             // PERCENTAGE | AMOUNT
+    val value: BigDecimal? = null,
     val maxDiscountAmount: BigDecimal? = null,
-    val minPurchase: BigDecimal = BigDecimal.ZERO,
-    val scope: String,                 // ALL | PRODUCT | CATEGORY
-    val productIds: List<Long> = emptyList(),
-    val categoryIds: List<Long> = emptyList(),
-    val channel: String,               // POS | ONLINE | BOTH
-    val visibility: String,            // ALL_OUTLET | SPECIFIC_OUTLET
-    val outletIds: List<Long> = emptyList(),
+    val minPurchase: BigDecimal? = null,
+    val scope: String? = null,                 // ALL | PRODUCT | CATEGORY
+    val productIds: List<Long>? = null,
+    val categoryIds: List<Long>? = null,
+    val channel: String? = null,               // POS | ONLINE | BOTH
+    val visibility: String? = null,            // ALL_OUTLET | SPECIFIC_OUTLET
+    val outletIds: List<Long>? = null,
     val usageLimit: Int? = null,
     val usagePerCustomer: Int? = null,
     val startDate: LocalDateTime? = null,
     val endDate: LocalDateTime? = null,
-    val isActive: Boolean = true
+    val isActive: Boolean? = null
 )

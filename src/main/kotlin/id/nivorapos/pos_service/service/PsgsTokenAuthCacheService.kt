@@ -1,6 +1,7 @@
 package id.nivorapos.pos_service.service
 
 import org.slf4j.LoggerFactory
+import net.logstash.logback.argument.StructuredArguments.keyValue
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
@@ -59,7 +60,12 @@ class PsgsTokenAuthCacheService(
                 tokenHash
             ).firstOrNull()
         } catch (e: DataAccessException) {
-            log.warn("[AUTH-CACHE] lookup failed; bypassing PSGS auth cache: ${e.javaClass.simpleName}: ${e.message}")
+            log.warn(
+                "psgs auth cache lookup failed",
+                keyValue("event_action", "auth_cache_error"),
+                keyValue("operation", "lookup"),
+                keyValue("exception_class", e.javaClass.name)
+            )
             null
         }
     }
@@ -78,7 +84,12 @@ class PsgsTokenAuthCacheService(
                 tokenHash
             )
         } catch (e: DataAccessException) {
-            log.warn("[AUTH-CACHE] touch failed: ${e.javaClass.simpleName}: ${e.message}")
+            log.warn(
+                "psgs auth cache touch failed",
+                keyValue("event_action", "auth_cache_error"),
+                keyValue("operation", "touch"),
+                keyValue("exception_class", e.javaClass.name)
+            )
         }
     }
 
@@ -121,7 +132,12 @@ class PsgsTokenAuthCacheService(
                 }
             }
         } catch (e: DataAccessException) {
-            log.warn("[AUTH-CACHE] upsert failed; request remains authenticated without cache: ${e.javaClass.simpleName}: ${e.message}")
+            log.warn(
+                "psgs auth cache upsert failed",
+                keyValue("event_action", "auth_cache_error"),
+                keyValue("operation", "upsert"),
+                keyValue("exception_class", e.javaClass.name)
+            )
         }
     }
 
@@ -130,7 +146,12 @@ class PsgsTokenAuthCacheService(
         return try {
             jdbcTemplate.queryForObject("select public.prune_psgs_token_auth_cache()", Int::class.java) ?: 0
         } catch (e: DataAccessException) {
-            log.warn("[AUTH-CACHE] prune failed: ${e.javaClass.simpleName}: ${e.message}")
+            log.warn(
+                "psgs auth cache prune failed",
+                keyValue("event_action", "auth_cache_error"),
+                keyValue("operation", "prune"),
+                keyValue("exception_class", e.javaClass.name)
+            )
             0
         }
     }

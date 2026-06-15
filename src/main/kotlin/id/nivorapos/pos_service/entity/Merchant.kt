@@ -7,7 +7,6 @@ import java.time.LocalDateTime
 @Table(name = "merchant")
 class Merchant(
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
 
     @Column(name = "area_id")
@@ -45,9 +44,6 @@ class Merchant(
 
     @Column(name = "merchant_vapn_id")
     var merchantVapnId: Long? = null,
-
-    @Column(name = "merchant_pos_id")
-    var merchantPosId: Long? = null,
 
     @Column(name = "created_by")
     var createdBy: String? = null,

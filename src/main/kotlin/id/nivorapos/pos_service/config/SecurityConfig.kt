@@ -1,6 +1,7 @@
 package id.nivorapos.pos_service.config
 
 import tools.jackson.databind.ObjectMapper
+import id.nivorapos.pos_service.security.ImageUploadSignatureFilter
 import id.nivorapos.pos_service.security.JwtAuthenticationFilter
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.context.annotation.Bean
@@ -22,6 +23,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @EnableWebSecurity
 class SecurityConfig(
     private val jwtAuthenticationFilter: JwtAuthenticationFilter,
+    private val imageUploadSignatureFilter: ImageUploadSignatureFilter,
     private val userDetailsService: UserDetailsService,
     private val passwordEncoder: PasswordEncoder,
     private val objectMapper: ObjectMapper
@@ -64,6 +66,7 @@ class SecurityConfig(
             }
             .authenticationProvider(authenticationProvider())
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)
+            .addFilterAfter(imageUploadSignatureFilter, JwtAuthenticationFilter::class.java)
 
         return http.build()
     }

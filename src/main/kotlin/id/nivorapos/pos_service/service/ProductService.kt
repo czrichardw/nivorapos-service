@@ -18,9 +18,7 @@ import java.time.LocalDateTime
 class ProductService(
     private val productRepository: ProductRepository,
     private val productCategoryRepository: ProductCategoryRepository,
-    private val productImageRepository: ProductImageRepository,
     private val categoryRepository: CategoryRepository,
-    private val merchantRepository: MerchantRepository,
     private val stockRepository: StockRepository,
     private val stockMovementRepository: StockMovementRepository,
     private val paymentSettingRepository: PaymentSettingRepository,
@@ -29,7 +27,9 @@ class ProductService(
     private val productVariantRepository: ProductVariantRepository,
     private val productModifierRepository: ProductModifierRepository,
     private val transactionItemRepository: TransactionItemRepository,
-    private val transactionItemModifierRepository: TransactionItemModifierRepository
+    private val transactionItemModifierRepository: TransactionItemModifierRepository,
+    private val psgsCredentialService: PsgsCredentialService,
+    private val imageUploadService: ImageUploadService
 ) {
 
     fun list(
@@ -46,7 +46,11 @@ class ProductService(
     ): PagedResponse<ProductResponse> {
         val merchantId = SecurityUtils.getMerchantIdFromContext()
         val direction = if (sortDir?.uppercase() == "ASC") Sort.Direction.ASC else Sort.Direction.DESC
-        val sortField = sortBy ?: "createdDate"
+        val sortField = when (sortBy) {
+            "price", "base_price" -> "basePrice"
+            null -> "createdDate"
+            else -> sortBy
+        }
         val pageable = PageRequest.of(page, size, Sort.by(direction, sortField))
 
         val spec = ProductSpecification.withFilters(
@@ -66,12 +70,11 @@ class ProductService(
 
             // Single fetch for shared merchant-level data
             val paymentSetting = paymentSettingRepository.findByMerchantId(merchantId).orElse(null)
-            val merchant = merchantRepository.findById(merchantId).orElse(null)
+            val merchant = runCatching { psgsCredentialService.findMerchant(merchantId) }.getOrNull()
 
             // Batch fetch all per-product collections in one query each
             val pcByProductId      = productCategoryRepository.findByProductIdIn(ids).groupBy { it.productId }
             val stocksByProductId  = stockRepository.findByProductIdIn(ids).groupBy { it.productId }
-            val imagesByProductId  = productImageRepository.findByProductIdIn(ids).groupBy { it.productId }
             val variantsByProductId = productVariantRepository.findByProductIdIn(ids).groupBy { it.productId }
             val modifiersByProductId = productModifierRepository.findByProductIdIn(ids).groupBy { it.productId }
 
@@ -93,7 +96,6 @@ class ProductService(
                     product, paymentSetting, merchant,
                     pcByProductId[product.id] ?: emptyList(),
                     stocksByProductId[product.id] ?: emptyList(),
-                    imagesByProductId[product.id] ?: emptyList(),
                     variantsByProductId[product.id] ?: emptyList(),
                     modifiersByProductId[product.id] ?: emptyList(),
                     categoriesById, variantGroupsById, taxesById
@@ -129,19 +131,11 @@ class ProductService(
         }
         require(request.qty >= 0) { "qty must be greater than or equal to 0" }
 
-        val paymentSetting = paymentSettingRepository.findByMerchantId(merchantId).orElse(null)
-        val calculatedPrice = calculateFinalPrice(
-            basePrice = request.basePrice ?: request.price,
-            taxId = request.taxId,
-            isTaxable = request.isTaxable,
-            isTaxEnabled = paymentSetting?.isTax == true,
-            isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true
-        )
-
+        val merchantUniqueCode = resolveMerchantUniqueCode(merchantId)
         val product = Product(
             merchantId = merchantId,
+            merchantUniqueCode = merchantUniqueCode,
             name = request.name,
-            price = calculatedPrice,
             productType = productType,
             sku = request.sku,
             upc = request.upc,
@@ -149,7 +143,7 @@ class ProductService(
             imageThumbUrl = request.imageThumbUrl,
             description = request.description,
             stockMode = request.stockMode,
-            basePrice = request.basePrice ?: request.price,
+            basePrice = request.basePrice,
             isTaxable = request.isTaxable,
             taxId = request.taxId,
             isStock = request.isStock,
@@ -184,7 +178,7 @@ class ProductService(
             )
         }
 
-        request.categoryIds.forEach { catId ->
+        request.categoryIds.distinct().forEach { catId ->
             val pc = ProductCategory(
                 productId = saved.id,
                 categoryId = catId,
@@ -201,52 +195,47 @@ class ProductService(
 
     @Transactional
     fun update(request: UpdateProductRequest): ApiResponse<ProductResponse> {
+        val merchantId = SecurityUtils.getMerchantIdFromContext()
         val username = SecurityUtils.getUsernameFromContext()
         val now = LocalDateTime.now()
 
         val product = productRepository.findByIdAndDeletedDateIsNull(request.id)
             .orElseThrow { RuntimeException("Product not found") }
-        val paymentSetting = paymentSettingRepository.findByMerchantId(product.merchantId).orElse(null)
-        val resolvedBasePrice = request.basePrice ?: request.price
-        val calculatedPrice = calculateFinalPrice(
-            basePrice = resolvedBasePrice,
-            taxId = request.taxId,
-            isTaxable = request.isTaxable,
-            isTaxEnabled = paymentSetting?.isTax == true,
-            isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true
-        )
+        require(product.merchantId == merchantId) { "Product tidak ditemukan" }
+        val merchantUniqueCode = resolveMerchantUniqueCode(product.merchantId)
+        request.name?.let { require(it.isNotBlank()) { "name wajib diisi" } }
+        val previousImageUrls = listOf(product.imageUrl, product.imageThumbUrl)
 
-        product.name = request.name
-        product.price = calculatedPrice
-        product.sku = request.sku
-        product.upc = request.upc
-        product.imageUrl = request.imageUrl
-        product.imageThumbUrl = request.imageThumbUrl
-        product.description = request.description
-        product.stockMode = request.stockMode
-        product.basePrice = resolvedBasePrice
-        product.isTaxable = request.isTaxable
-        product.taxId = request.taxId
-        product.isActive = request.isActive
-        product.isStock = request.isStock
+        product.name = request.name ?: product.name
+        product.merchantUniqueCode = merchantUniqueCode
+        product.sku = request.sku ?: product.sku
+        product.upc = request.upc ?: product.upc
+        product.imageUrl = request.imageUrl ?: product.imageUrl
+        product.imageThumbUrl = request.imageThumbUrl ?: product.imageThumbUrl
+        product.description = request.description ?: product.description
+        product.stockMode = request.stockMode ?: product.stockMode
+        product.basePrice = request.basePrice ?: product.basePrice
+        product.isTaxable = request.isTaxable ?: product.isTaxable
+        if (request.isTaxable == false) {
+            product.taxId = null
+        } else {
+            product.taxId = request.taxId ?: product.taxId
+        }
+        product.isActive = request.isActive ?: product.isActive
+        product.isStock = request.isStock ?: product.isStock
         product.modifiedBy = username
         product.modifiedDate = now
 
         val saved = productRepository.save(product)
+        val replacementImageUrls = previousImageUrls.filterNot { oldUrl ->
+            oldUrl.isNullOrBlank() || oldUrl == saved.imageUrl || oldUrl == saved.imageThumbUrl
+        }
+        imageUploadService.deleteIfMinioUrls(replacementImageUrls)
 
-        syncBaseProductStock(saved, request.isStock, username, now)
+        request.isStock?.let { syncBaseProductStock(saved, it, username, now) }
 
-        productCategoryRepository.deleteByProductId(saved.id)
-        request.categoryIds.forEach { catId ->
-            val pc = ProductCategory(
-                productId = saved.id,
-                categoryId = catId,
-                createdBy = username,
-                createdDate = now,
-                modifiedBy = username,
-                modifiedDate = now
-            )
-            productCategoryRepository.save(pc)
+        request.categoryIds?.let { categoryIds ->
+            syncProductCategories(saved.id, categoryIds, username, now)
         }
 
         return ApiResponse.success("Product updated", buildProductResponse(saved))
@@ -261,27 +250,20 @@ class ProductService(
         product.deletedBy = username
         product.deletedDate = LocalDateTime.now()
         productRepository.save(product)
+        imageUploadService.deleteIfMinioUrls(listOf(product.imageUrl, product.imageThumbUrl))
 
         return ApiResponse.success("Product deleted")
     }
 
     @Transactional
     fun recalculateMerchantPrices(merchantId: Long) {
-        val paymentSetting = paymentSettingRepository.findByMerchantId(merchantId).orElse(null)
-        val products = productRepository.findByMerchantIdAndDeletedDateIsNull(merchantId)
-
-        products.forEach { product ->
-            val basePrice = product.basePrice ?: product.price
-            product.price = calculateFinalPrice(
-                basePrice = basePrice,
-                taxId = product.taxId,
-                isTaxable = product.isTaxable,
-                isTaxEnabled = paymentSetting?.isTax == true,
-                isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true
-            )
-        }
-
-        productRepository.saveAll(products)
+        productRepository.findByMerchantIdAndDeletedDateIsNull(merchantId)
+            .filter { it.basePrice == null }
+            .takeIf { it.isNotEmpty() }
+            ?.let { products ->
+                products.forEach { it.basePrice = BigDecimal.ZERO }
+                productRepository.saveAll(products)
+            }
     }
 
     // ─── Variant Group (merchant-level) ───────────────────────────────────────
@@ -299,13 +281,14 @@ class ProductService(
         val username = SecurityUtils.getUsernameFromContext()
         val now = LocalDateTime.now()
 
-        require(request.name.isNotBlank()) { "name wajib diisi" }
+        val name = request.name?.takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("name wajib diisi")
 
         val group = ProductVariantGroup(
             merchantId = merchantId,
-            name = request.name,
-            isRequired = request.isRequired,
-            displayOrder = request.displayOrder,
+            name = name,
+            isRequired = request.isRequired ?: true,
+            displayOrder = request.displayOrder ?: 0,
             createdBy = username,
             createdDate = now,
             modifiedBy = username,
@@ -321,11 +304,11 @@ class ProductService(
         val group = productVariantGroupRepository.findByMerchantIdAndId(merchantId, groupId)
             ?: throw RuntimeException("Variant group tidak ditemukan")
 
-        require(request.name.isNotBlank()) { "name wajib diisi" }
+        request.name?.let { require(it.isNotBlank()) { "name wajib diisi" } }
 
-        group.name = request.name
-        group.isRequired = request.isRequired
-        group.displayOrder = request.displayOrder
+        group.name = request.name ?: group.name
+        group.isRequired = request.isRequired ?: group.isRequired
+        group.displayOrder = request.displayOrder ?: group.displayOrder
         group.modifiedBy = SecurityUtils.getUsernameFromContext()
         group.modifiedDate = LocalDateTime.now()
 
@@ -352,10 +335,16 @@ class ProductService(
     fun addVariant(productId: Long, request: VariantRequest): ApiResponse<ProductVariantResponse> {
         val product = getProductForCurrentMerchant(productId)
         require(product.productType == "VARIANT") { "Produk bukan tipe VARIANT" }
+        val variantGroupId = request.variantGroupId ?: throw IllegalArgumentException("variantGroupId wajib diisi")
+        val name = request.name?.takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("name wajib diisi")
+        val isStock = request.isStock ?: true
+        val isDefault = request.isDefault ?: false
+        val qty = request.qty ?: 0
 
         // Validasi variant group milik merchant yang sama
         val merchantId = SecurityUtils.getMerchantIdFromContext()
-        productVariantGroupRepository.findByMerchantIdAndId(merchantId, request.variantGroupId)
+        productVariantGroupRepository.findByMerchantIdAndId(merchantId, variantGroupId)
             ?: throw RuntimeException("Variant group tidak ditemukan atau bukan milik merchant ini")
 
         if (request.sku != null) {
@@ -367,16 +356,16 @@ class ProductService(
         val username = SecurityUtils.getUsernameFromContext()
         val now = LocalDateTime.now()
 
-        if (request.isDefault) clearVariantGroupDefault(request.variantGroupId)
+        if (isDefault) clearVariantGroupDefault(variantGroupId)
 
         val variant = ProductVariant(
             productId = productId,
-            variantGroupId = request.variantGroupId,
-            name = request.name,
-            additionalPrice = request.additionalPrice,
+            variantGroupId = variantGroupId,
+            name = name,
+            additionalPrice = request.additionalPrice ?: BigDecimal.ZERO,
             sku = request.sku,
-            isStock = request.isStock,
-            isDefault = request.isDefault,
+            isStock = isStock,
+            isDefault = isDefault,
             createdBy = username,
             createdDate = now,
             modifiedBy = username,
@@ -385,11 +374,11 @@ class ProductService(
         val saved = productVariantRepository.save(variant)
 
         // Buat stock record hanya jika isStock=true
-        if (request.isStock) {
+        if (isStock) {
             val stock = Stock(
                 productId = productId,
                 variantId = saved.id,
-                qty = request.qty,
+                qty = qty,
                 createdBy = username,
                 createdDate = now,
                 modifiedBy = username,
@@ -400,7 +389,7 @@ class ProductService(
                 productId = productId,
                 variantId = saved.id,
                 merchantId = product.merchantId,
-                qty = request.qty,
+                qty = qty,
                 stockAfter = savedStock.qty,
                 movementType = STOCK_MOVEMENT_ADD,
                 movementReason = STOCK_MOVEMENT_INITIAL,
@@ -417,6 +406,7 @@ class ProductService(
         getProductForCurrentMerchant(productId)
         val variant = productVariantRepository.findByProductIdAndId(productId, variantId)
             ?: throw RuntimeException("Variant not found")
+        request.name?.let { require(it.isNotBlank()) { "name wajib diisi" } }
 
         if (request.sku != null && request.sku != variant.sku) {
             require(!productVariantRepository.existsBySkuAndProductId(request.sku, productId)) {
@@ -424,18 +414,26 @@ class ProductService(
             }
         }
 
-        if (request.isDefault && !variant.isDefault) clearVariantGroupDefault(variant.variantGroupId)
+        request.variantGroupId?.let { requestedGroupId ->
+            val merchantId = SecurityUtils.getMerchantIdFromContext()
+            productVariantGroupRepository.findByMerchantIdAndId(merchantId, requestedGroupId)
+                ?: throw RuntimeException("Variant group tidak ditemukan atau bukan milik merchant ini")
+        }
+        if (request.isDefault == true && !variant.isDefault) {
+            clearVariantGroupDefault(request.variantGroupId ?: variant.variantGroupId)
+        }
 
-        variant.name = request.name
-        variant.additionalPrice = request.additionalPrice
-        variant.sku = request.sku
-        variant.isStock = request.isStock
-        variant.isDefault = request.isDefault
+        variant.variantGroupId = request.variantGroupId ?: variant.variantGroupId
+        variant.name = request.name ?: variant.name
+        variant.additionalPrice = request.additionalPrice ?: variant.additionalPrice
+        variant.sku = request.sku ?: variant.sku
+        variant.isStock = request.isStock ?: variant.isStock
+        variant.isDefault = request.isDefault ?: variant.isDefault
         variant.modifiedBy = SecurityUtils.getUsernameFromContext()
         variant.modifiedDate = LocalDateTime.now()
 
         val saved = productVariantRepository.save(variant)
-        syncVariantStock(productId, saved.id, request.isStock, SecurityUtils.getUsernameFromContext(), LocalDateTime.now())
+        request.isStock?.let { syncVariantStock(productId, saved.id, it, SecurityUtils.getUsernameFromContext(), LocalDateTime.now()) }
         return ApiResponse.success("Variant updated", buildVariantResponse(saved))
     }
 
@@ -468,19 +466,22 @@ class ProductService(
             "Modifier hanya dapat ditambahkan ke produk tipe MODIFIER atau VARIANT"
         }
 
-        require(request.name.isNotBlank()) { "name wajib diisi" }
-        require(request.additionalPrice >= BigDecimal.ZERO) { "additionalPrice harus >= 0" }
+        val name = request.name?.takeIf { it.isNotBlank() }
+            ?: throw IllegalArgumentException("name wajib diisi")
+        val additionalPrice = request.additionalPrice ?: BigDecimal.ZERO
+        val isDefault = request.isDefault ?: false
+        require(additionalPrice >= BigDecimal.ZERO) { "additionalPrice harus >= 0" }
 
         val username = SecurityUtils.getUsernameFromContext()
         val now = LocalDateTime.now()
 
-        if (request.isDefault) clearProductModifierDefault(productId)
+        if (isDefault) clearProductModifierDefault(productId)
 
         val modifier = ProductModifier(
             productId = productId,
-            name = request.name,
-            additionalPrice = request.additionalPrice,
-            isDefault = request.isDefault,
+            name = name,
+            additionalPrice = additionalPrice,
+            isDefault = isDefault,
             createdBy = username,
             createdDate = now,
             modifiedBy = username,
@@ -495,12 +496,14 @@ class ProductService(
         getProductForCurrentMerchant(productId)
         val modifier = productModifierRepository.findByProductIdAndId(productId, modifierId)
             ?: throw RuntimeException("Modifier not found")
+        request.name?.let { require(it.isNotBlank()) { "name wajib diisi" } }
+        request.additionalPrice?.let { require(it >= BigDecimal.ZERO) { "additionalPrice harus >= 0" } }
 
-        if (request.isDefault && !modifier.isDefault) clearProductModifierDefault(productId)
+        if (request.isDefault == true && !modifier.isDefault) clearProductModifierDefault(productId)
 
-        modifier.name = request.name
-        modifier.additionalPrice = request.additionalPrice
-        modifier.isDefault = request.isDefault
+        modifier.name = request.name ?: modifier.name
+        modifier.additionalPrice = request.additionalPrice ?: modifier.additionalPrice
+        modifier.isDefault = request.isDefault ?: modifier.isDefault
         modifier.modifiedBy = SecurityUtils.getUsernameFromContext()
         modifier.modifiedDate = LocalDateTime.now()
 
@@ -538,13 +541,17 @@ class ProductService(
         return product
     }
 
+    private fun resolveMerchantUniqueCode(merchantId: Long): String? {
+        val psgsMerchant = runCatching { psgsCredentialService.findMerchant(merchantId) }.getOrNull()
+        return psgsMerchant?.merchantUniqueCode ?: psgsMerchant?.let { "PSGS-$merchantId" }
+    }
+
     private fun buildProductResponseBatched(
         product: Product,
         paymentSetting: id.nivorapos.pos_service.entity.PaymentSetting?,
-        merchant: id.nivorapos.pos_service.entity.Merchant?,
+        merchant: PsgsMerchant?,
         productCategories: List<id.nivorapos.pos_service.entity.ProductCategory>,
         allStocks: List<id.nivorapos.pos_service.entity.Stock>,
-        images: List<id.nivorapos.pos_service.entity.ProductImage>,
         variants: List<id.nivorapos.pos_service.entity.ProductVariant>,
         modifiers: List<id.nivorapos.pos_service.entity.ProductModifier>,
         categoriesById: Map<Long, id.nivorapos.pos_service.entity.Category>,
@@ -552,7 +559,13 @@ class ProductService(
         taxesById: Map<Long, id.nivorapos.pos_service.entity.Tax>
     ): ProductResponse {
         val tax = product.taxId?.let { taxesById[it] }
-        val basePrice = product.basePrice ?: product.price
+        val basePrice = resolveBasePrice(product)
+        val finalPrice = calculateFinalPrice(
+            basePrice = basePrice,
+            taxId = product.taxId,
+            isTaxable = product.isTaxable,
+            isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true
+        )
 
         val qty = when {
             product.productType == "VARIANT" -> allStocks.sumOf { it.qty }
@@ -562,10 +575,6 @@ class ProductService(
 
         val categories = productCategories.mapNotNull { pc ->
             categoriesById[pc.categoryId]?.let { ProductCategoryResponse(id = it.id, name = it.name) }
-        }
-
-        val productImages = images.map {
-            ProductImageResponse(id = it.id, filename = it.filename, ext = it.ext, isMain = it.isMain)
         }
 
         val taxResponse = buildTaxResponse(tax, product, paymentSetting, basePrice)
@@ -598,12 +607,12 @@ class ProductService(
             productType = product.productType, sku = product.sku, upc = product.upc,
             imageUrl = product.imageUrl, imageThumbUrl = product.imageThumbUrl,
             description = product.description, stockMode = product.stockMode,
-            basePrice = basePrice, finalPrice = product.price,
+            basePrice = basePrice, finalPrice = finalPrice,
             isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true,
             qty = qty, isActive = product.isActive, isStock = product.isStock,
-            merchantName = merchant?.merchantName ?: merchant?.name,
+            merchantName = displayMerchantName(merchant),
             createdDate = product.createdDate, isTaxable = product.isTaxable,
-            tax = taxResponse, categories = categories, productImages = productImages,
+            tax = taxResponse, categories = categories, productImages = emptyList(),
             variantGroups = variantGroups, modifiers = modifierResponses
         )
     }
@@ -617,29 +626,27 @@ class ProductService(
         return if (tax != null) {
             val taxAmount = calculateItemTaxAmount(
                 basePrice = basePrice, isTaxable = product.isTaxable,
-                isTaxEnabled = paymentSetting?.isTax == true,
                 isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true,
                 percentage = tax.percentage
             )
             ProductTaxResponse(taxId = tax.id, taxName = tax.name, taxPercentage = tax.percentage, taxAmount = taxAmount)
-        } else if (product.isTaxable && paymentSetting?.isTax == true && paymentSetting.taxPercentage > BigDecimal.ZERO) {
-            val taxAmount = calculateItemTaxAmount(
-                basePrice = basePrice, isTaxable = true, isTaxEnabled = true,
-                isPriceIncludeTax = paymentSetting.isPriceIncludeTax,
-                percentage = paymentSetting.taxPercentage
-            )
-            ProductTaxResponse(
-                taxId = null, taxName = paymentSetting.taxName,
-                taxPercentage = paymentSetting.taxPercentage, taxAmount = taxAmount
-            )
         } else null
     }
 
+    private fun resolveBasePrice(product: Product): BigDecimal =
+        product.basePrice ?: BigDecimal.ZERO
+
     private fun buildProductResponse(product: Product): ProductResponse {
         val paymentSetting = paymentSettingRepository.findByMerchantId(product.merchantId).orElse(null)
-        val merchant = merchantRepository.findById(product.merchantId).orElse(null)
+        val merchant = runCatching { psgsCredentialService.findMerchant(product.merchantId) }.getOrNull()
         val tax = product.taxId?.let { taxRepository.findById(it).orElse(null) }
-        val basePrice = product.basePrice ?: product.price
+        val basePrice = resolveBasePrice(product)
+        val finalPrice = calculateFinalPrice(
+            basePrice = basePrice,
+            taxId = product.taxId,
+            isTaxable = product.isTaxable,
+            isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true
+        )
         val productCategories = productCategoryRepository.findByProductId(product.id)
 
         val qty = when {
@@ -653,33 +660,14 @@ class ProductService(
                 ProductCategoryResponse(id = it.id, name = it.name)
             }
         }
-        val productImages = productImageRepository.findByProductId(product.id).map {
-            ProductImageResponse(id = it.id, filename = it.filename, ext = it.ext, isMain = it.isMain)
-        }
-
         val taxResponse: ProductTaxResponse? = if (tax != null) {
             val taxAmount = calculateItemTaxAmount(
                 basePrice = basePrice,
                 isTaxable = product.isTaxable,
-                isTaxEnabled = paymentSetting?.isTax == true,
                 isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true,
                 percentage = tax.percentage
             )
             ProductTaxResponse(taxId = tax.id, taxName = tax.name, taxPercentage = tax.percentage, taxAmount = taxAmount)
-        } else if (product.isTaxable && paymentSetting?.isTax == true && paymentSetting.taxPercentage > BigDecimal.ZERO) {
-            val taxAmount = calculateItemTaxAmount(
-                basePrice = basePrice,
-                isTaxable = true,
-                isTaxEnabled = true,
-                isPriceIncludeTax = paymentSetting.isPriceIncludeTax,
-                percentage = paymentSetting.taxPercentage
-            )
-            ProductTaxResponse(
-                taxId = null,
-                taxName = paymentSetting.taxName,
-                taxPercentage = paymentSetting.taxPercentage,
-                taxAmount = taxAmount
-            )
         } else null
 
         // Variant groups: tampilkan hanya variant group yang terikat ke produk ini
@@ -707,20 +695,24 @@ class ProductService(
             description = product.description,
             stockMode = product.stockMode,
             basePrice = basePrice,
-            finalPrice = product.price,
+            finalPrice = finalPrice,
             isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true,
             qty = qty,
             isActive = product.isActive,
             isStock = product.isStock,
-            merchantName = merchant?.merchantName ?: merchant?.name,
+            merchantName = displayMerchantName(merchant),
             createdDate = product.createdDate,
             isTaxable = product.isTaxable,
             tax = taxResponse,
             categories = categories,
-            productImages = productImages,
+            productImages = emptyList(),
             variantGroups = variantGroups,
             modifiers = modifiers
         )
+    }
+
+    private fun displayMerchantName(merchant: PsgsMerchant?): String? {
+        return merchant?.dba?.takeIf { it.isNotBlank() } ?: merchant?.name
     }
 
     private fun buildVariantGroupResponse(group: ProductVariantGroup, productId: Long): ProductVariantGroupResponse {
@@ -834,6 +826,39 @@ class ProductService(
         }
     }
 
+    private fun syncProductCategories(
+        productId: Long,
+        requestedCategoryIds: List<Long>,
+        username: String,
+        now: LocalDateTime
+    ) {
+        val requestedIds = requestedCategoryIds.distinct()
+        val requestedIdSet = requestedIds.toSet()
+        val existingLinks = productCategoryRepository.findByProductId(productId)
+        val existingIds = existingLinks.map { it.categoryId }.toSet()
+
+        val linksToRemove = existingLinks.filter { it.categoryId !in requestedIdSet }
+        if (linksToRemove.isNotEmpty()) {
+            productCategoryRepository.deleteAll(linksToRemove)
+        }
+
+        val linksToAdd = requestedIds
+            .filter { it !in existingIds }
+            .map { catId ->
+                ProductCategory(
+                    productId = productId,
+                    categoryId = catId,
+                    createdBy = username,
+                    createdDate = now,
+                    modifiedBy = username,
+                    modifiedDate = now
+                )
+            }
+        if (linksToAdd.isNotEmpty()) {
+            productCategoryRepository.saveAll(linksToAdd)
+        }
+    }
+
     private fun syncVariantStock(
         productId: Long,
         variantId: Long,
@@ -919,11 +944,10 @@ class ProductService(
     private fun calculateItemTaxAmount(
         basePrice: BigDecimal,
         isTaxable: Boolean,
-        isTaxEnabled: Boolean,
         isPriceIncludeTax: Boolean,
         percentage: BigDecimal
     ): BigDecimal {
-        if (!isTaxable || !isTaxEnabled || percentage.compareTo(BigDecimal.ZERO) <= 0) {
+        if (!isTaxable || percentage.compareTo(BigDecimal.ZERO) <= 0) {
             return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
         }
         val hundred = BigDecimal("100")
@@ -939,10 +963,9 @@ class ProductService(
         basePrice: BigDecimal,
         taxId: Long?,
         isTaxable: Boolean,
-        isTaxEnabled: Boolean,
         isPriceIncludeTax: Boolean
     ): BigDecimal {
-        if (!isTaxable || !isTaxEnabled || taxId == null) {
+        if (!isTaxable || taxId == null) {
             return basePrice.setScale(2, RoundingMode.HALF_UP)
         }
         val tax = taxRepository.findById(taxId).orElse(null)
