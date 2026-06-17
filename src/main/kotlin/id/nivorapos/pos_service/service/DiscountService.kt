@@ -157,11 +157,11 @@ class DiscountService(
      * GET /pos/discount/list-available
      * Hanya diskon tanpa kode (code=null) yang aktif dan berlaku di outlet/channel tersebut.
      */
-    fun listAvailable(outletId: Long?, transactionTotal: BigDecimal, customerId: Long?): ApiResponse<List<DiscountListAvailableResponse>> {
+    fun listAvailable(outletId: Long?, transactionTotal: BigDecimal, customerId: Long?): ApiResponse<List<DiscountAvailableResponse>> {
         val merchantId = SecurityUtils.getMerchantIdFromContext()
         val now = LocalDateTime.now()
 
-        val available = discountRepository.findByMerchantIdAndDeletedDateIsNull(merchantId)
+        val discounts = discountRepository.findByMerchantIdAndDeletedDateIsNull(merchantId)
             .filter { d ->
                 d.code == null &&
                 d.isActive &&
@@ -171,15 +171,45 @@ class DiscountService(
                 isOutletEligible(d, outletId) &&
                 transactionTotal >= d.minPurchase
             }
-            .map {
-                DiscountListAvailableResponse(
-                    id = it.id,
-                    name = it.name,
-                    valueType = it.valueType,
-                    value = it.value,
-                    maxDiscountAmount = it.maxDiscountAmount,
-                    scope = it.scope
-                )
+
+        val discountIds = discounts.map { it.id }
+        val productIdsByDiscount = if (discountIds.isEmpty()) emptyMap()
+            else discountProductRepository.findByDiscountIdIn(discountIds).groupBy { it.discountId }
+                .mapValues { (_, links) -> links.map { it.productId } }
+        val categoryIdsByDiscount = if (discountIds.isEmpty()) emptyMap()
+            else discountCategoryRepository.findByDiscountIdIn(discountIds).groupBy { it.discountId }
+                .mapValues { (_, links) -> links.map { it.categoryId } }
+        val productNames = productIdsByDiscount.values.flatten().distinct()
+            .takeIf { it.isNotEmpty() }
+            ?.let { ids -> productRepository.findAllById(ids).associate { it.id to it.name } }
+            ?: emptyMap()
+        val categoryNames = categoryIdsByDiscount.values.flatten().distinct()
+            .takeIf { it.isNotEmpty() }
+            ?.let { ids -> categoryRepository.findAllById(ids).associate { it.id to it.name } }
+            ?: emptyMap()
+
+        val available = discounts.map {
+            val productIds = productIdsByDiscount[it.id].orEmpty()
+            val categoryIds = categoryIdsByDiscount[it.id].orEmpty()
+            DiscountAvailableResponse(
+                id = it.id,
+                name = it.name,
+                valueType = it.valueType,
+                value = it.value,
+                maxDiscountAmount = it.maxDiscountAmount,
+                minPurchase = it.minPurchase,
+                scope = it.scope,
+                usageCount = it.usageCount,
+                usageLimit = it.usageLimit,
+                usageRemaining = it.usageLimit?.let { limit -> (limit - it.usageCount).coerceAtLeast(0) },
+                categoryIds = categoryIds,
+                targetProductIds = productIds,
+                targetCategories = categoryIds.mapNotNull { id -> categoryNames[id]?.let { name -> NamedRefResponse(id, name) } },
+                targetProducts = productIds.mapNotNull { id -> productNames[id]?.let { name -> NamedRefResponse(id, name) } },
+                channel = it.channel,
+                startDate = it.startDate?.toLocalDate()?.toString(),
+                endDate = it.endDate?.toLocalDate()?.toString()
+            )
             }
         return ApiResponse.success("Available discounts", available)
     }

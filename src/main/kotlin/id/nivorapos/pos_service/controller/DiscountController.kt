@@ -68,13 +68,13 @@ class DiscountController(
         }
     }
 
-    @GetMapping("/list-available")
+    @GetMapping("/available", "/list-available")
     @PreAuthorize("hasAuthority('DISCOUNT_VIEW')")
     fun listAvailable(
         @RequestParam(required = false) outletId: Long?,
         @RequestParam(defaultValue = "0") transactionTotal: BigDecimal,
         @RequestParam(required = false) customerId: Long?
-    ): ResponseEntity<ApiResponse<List<DiscountListAvailableResponse>>> {
+    ): ResponseEntity<ApiResponse<List<DiscountAvailableResponse>>> {
         return try {
             ResponseEntity.ok(discountService.listAvailable(outletId, transactionTotal, customerId))
         } catch (e: Exception) {

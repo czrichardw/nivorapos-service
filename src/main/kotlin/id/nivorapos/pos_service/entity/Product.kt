@@ -59,6 +59,12 @@ class Product(
     @Column(name = "is_stock", nullable = false)
     var isStock: Boolean = true,
 
+    @Column(name = "is_price_adjustable", nullable = false)
+    var isPriceAdjustable: Boolean = false,
+
+    @Column(name = "is_unlimited_stock", nullable = false)
+    var isUnlimitedStock: Boolean = false,
+
     @Column(name = "deleted_by")
     var deletedBy: String? = null,
 

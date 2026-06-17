@@ -29,6 +29,9 @@ class Transaction(
     @Column(name = "transaction_origin")
     var transactionOrigin: String? = null,
 
+    @Column(name = "notes", columnDefinition = "text")
+    var notes: String? = null,
+
     @Column(name = "status")
     var status: String = "PENDING",
 
@@ -43,6 +46,27 @@ class Transaction(
 
     @Column(name = "total_amount", precision = 19, scale = 2)
     var totalAmount: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "net_amount", precision = 19, scale = 2)
+    var netAmount: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "total_discount", precision = 19, scale = 2)
+    var totalDiscount: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "total_promotion_amount", precision = 19, scale = 2)
+    var totalPromotionAmount: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "voucher_amount", precision = 19, scale = 2)
+    var voucherAmount: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "base_amount", precision = 19, scale = 2)
+    var baseAmount: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "variant_total", precision = 19, scale = 2)
+    var variantTotal: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "modifier_total", precision = 19, scale = 2)
+    var modifierTotal: BigDecimal = BigDecimal.ZERO,
 
     @Column(name = "service_charge_percentage", precision = 10, scale = 2)
     var serviceChargePercentage: BigDecimal = BigDecimal.ZERO,
@@ -61,6 +85,15 @@ class Transaction(
 
     @Column(name = "tax_name")
     var taxName: String? = null,
+
+    @Column(name = "tax_applied_after_discount")
+    var taxAppliedAfterDiscount: Boolean? = null,
+
+    @Column(name = "service_charge_type")
+    var serviceChargeType: String? = null,
+
+    @Column(name = "service_charge_value", precision = 19, scale = 2)
+    var serviceChargeValue: BigDecimal? = null,
 
     @Column(name = "total_rounding", precision = 19, scale = 2)
     var totalRounding: BigDecimal = BigDecimal.ZERO,

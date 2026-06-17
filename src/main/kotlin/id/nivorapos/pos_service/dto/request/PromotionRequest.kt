@@ -2,6 +2,7 @@ package id.nivorapos.pos_service.dto.request
 
 import java.math.BigDecimal
 import java.time.LocalDateTime
+import java.time.LocalTime
 
 data class PromotionRequest(
     val name: String? = null,
@@ -37,6 +38,8 @@ data class PromotionRequest(
     val visibility: String? = null,            // ALL_OUTLET | SPECIFIC_OUTLET
     val outletIds: List<Long>? = null,
     val validDays: List<String>? = null, // MONDAY, TUESDAY, ...
+    val startTime: LocalTime? = null,
+    val endTime: LocalTime? = null,
     val startDate: LocalDateTime? = null,
     val endDate: LocalDateTime? = null
 )

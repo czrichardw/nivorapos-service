@@ -45,6 +45,36 @@ class ProductController(
         }
     }
 
+    @GetMapping("/{productId}/option-groups")
+    @PreAuthorize("hasAuthority('PRODUCT_VIEW')")
+    fun optionGroups(@PathVariable productId: Long): ResponseEntity<ApiResponse<ProductOptionGroupsResponse>> {
+        return try {
+            ResponseEntity.ok(productService.optionGroups(productId))
+        } catch (e: Exception) {
+            ResponseEntity.status(404).body(ApiResponse.error(e.message ?: "Not found"))
+        }
+    }
+
+    @GetMapping("/{productId}/variants")
+    @PreAuthorize("hasAuthority('PRODUCT_VIEW')")
+    fun variants(@PathVariable productId: Long): ResponseEntity<ApiResponse<List<ProductVariantOptionsResponse>>> {
+        return try {
+            ResponseEntity.ok(productService.variants(productId))
+        } catch (e: Exception) {
+            ResponseEntity.status(404).body(ApiResponse.error(e.message ?: "Not found"))
+        }
+    }
+
+    @GetMapping("/{productId}/modifiers")
+    @PreAuthorize("hasAuthority('PRODUCT_VIEW')")
+    fun modifiers(@PathVariable productId: Long): ResponseEntity<ApiResponse<List<ProductModifierOptionResponse>>> {
+        return try {
+            ResponseEntity.ok(productService.modifiers(productId))
+        } catch (e: Exception) {
+            ResponseEntity.status(404).body(ApiResponse.error(e.message ?: "Not found"))
+        }
+    }
+
     @PostMapping("/add")
     @PreAuthorize("hasAuthority('PRODUCT_CREATE')")
     fun add(@RequestBody request: ProductRequest): ResponseEntity<ApiResponse<ProductResponse>> {

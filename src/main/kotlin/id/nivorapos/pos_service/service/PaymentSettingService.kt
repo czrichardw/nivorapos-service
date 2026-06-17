@@ -150,7 +150,8 @@ class PaymentSettingService(
         isServiceCharge = request.isServiceCharge ?: setting.isServiceCharge,
         serviceChargePercentage = request.serviceChargePercentage ?: setting.serviceChargePercentage,
         serviceChargeAmount = request.serviceChargeAmount ?: setting.serviceChargeAmount,
-        serviceChargeSource = request.serviceChargeSource ?: setting.serviceChargeSource
+        serviceChargeSource = request.serviceChargeSource ?: setting.serviceChargeSource,
+        receiptFooterText = request.receiptFooterText ?: setting.receiptFooterText
     )
 
     private fun applyRequest(
@@ -167,6 +168,7 @@ class PaymentSettingService(
         setting.serviceChargePercentage = request.serviceChargePercentage ?: setting.serviceChargePercentage
         setting.serviceChargeAmount = request.serviceChargeAmount ?: setting.serviceChargeAmount
         setting.serviceChargeSource = request.serviceChargeSource?.uppercase() ?: setting.serviceChargeSource
+        setting.receiptFooterText = request.receiptFooterText ?: setting.receiptFooterText
         setting.modifiedBy = username
         setting.modifiedDate = now
     }
@@ -182,6 +184,7 @@ class PaymentSettingService(
         serviceChargePercentage = serviceChargePercentage,
         serviceChargeAmount = serviceChargeAmount,
         serviceChargeSource = serviceChargeSource,
+        receiptFooterText = receiptFooterText,
         createdBy = createdBy,
         createdDate = createdDate,
         modifiedBy = modifiedBy,

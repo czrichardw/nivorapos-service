@@ -39,6 +39,9 @@ class PaymentSetting(
     @Column(name = "service_charge_source")
     var serviceChargeSource: String? = null,
 
+    @Column(name = "receipt_footer_text", columnDefinition = "text")
+    var receiptFooterText: String? = null,
+
     @Column(name = "created_by")
     var createdBy: String? = null,
 

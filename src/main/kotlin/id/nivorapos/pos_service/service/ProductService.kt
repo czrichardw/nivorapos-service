@@ -26,6 +26,7 @@ class ProductService(
     private val productVariantGroupRepository: ProductVariantGroupRepository,
     private val productVariantRepository: ProductVariantRepository,
     private val productModifierRepository: ProductModifierRepository,
+    private val productModifierGroupRepository: ProductModifierGroupRepository,
     private val transactionItemRepository: TransactionItemRepository,
     private val transactionItemModifierRepository: TransactionItemModifierRepository,
     private val psgsCredentialService: PsgsCredentialService,
@@ -119,6 +120,59 @@ class ProductService(
         return ApiResponse.success("Product found", buildProductResponse(product))
     }
 
+    fun optionGroups(productId: Long): ApiResponse<ProductOptionGroupsResponse> {
+        val product = getProductForCurrentMerchant(productId)
+        return ApiResponse.success(
+            "Product option groups retrieved",
+            ProductOptionGroupsResponse(
+                productId = product.id,
+                productType = product.productType,
+                isPriceAdjustable = product.isPriceAdjustable,
+                variantGroups = buildProductOptionVariantGroups(product.id),
+                modifierGroups = buildProductOptionModifierGroups(product.id)
+            )
+        )
+    }
+
+    fun variants(productId: Long): ApiResponse<List<ProductVariantOptionsResponse>> {
+        getProductForCurrentMerchant(productId)
+        val groups = buildProductOptionVariantGroups(productId).map { group ->
+            ProductVariantOptionsResponse(
+                groupId = group.groupId,
+                name = group.name,
+                isRequired = group.isRequired,
+                selectionType = group.selectionType,
+                options = group.options.map {
+                    ProductVariantOptionResponse(
+                        optionId = it.optionId,
+                        name = it.name,
+                        priceAdjustment = it.priceAdjustment,
+                        additionalPrice = it.priceAdjustment
+                    )
+                }
+            )
+        }
+        return ApiResponse.success("Product variants retrieved", groups)
+    }
+
+    fun modifiers(productId: Long): ApiResponse<List<ProductModifierOptionResponse>> {
+        getProductForCurrentMerchant(productId)
+        val groupsById = productModifierGroupRepository.findByProductId(productId).associateBy { it.id }
+        val modifiers = productModifierRepository.findByProductId(productId)
+            .filter { it.isActive }
+            .map { modifier ->
+                val group = modifier.modifierGroupId?.let { groupsById[it] }
+                ProductModifierOptionResponse(
+                    optionId = modifier.id,
+                    name = modifier.name,
+                    additionalPrice = modifier.additionalPrice,
+                    groupId = group?.id ?: 0,
+                    groupName = group?.name ?: "Modifier"
+                )
+            }
+        return ApiResponse.success("Product modifiers retrieved", modifiers)
+    }
+
     @Transactional
     fun add(request: ProductRequest): ApiResponse<ProductResponse> {
         val merchantId = SecurityUtils.getMerchantIdFromContext()
@@ -147,6 +201,8 @@ class ProductService(
             isTaxable = request.isTaxable,
             taxId = request.taxId,
             isStock = request.isStock,
+            isPriceAdjustable = request.isPriceAdjustable,
+            isUnlimitedStock = request.isUnlimitedStock,
             createdBy = username,
             createdDate = now,
             modifiedBy = username,
@@ -223,6 +279,8 @@ class ProductService(
         }
         product.isActive = request.isActive ?: product.isActive
         product.isStock = request.isStock ?: product.isStock
+        product.isPriceAdjustable = request.isPriceAdjustable ?: product.isPriceAdjustable
+        product.isUnlimitedStock = request.isUnlimitedStock ?: product.isUnlimitedStock
         product.modifiedBy = username
         product.modifiedDate = now
 
@@ -288,6 +346,9 @@ class ProductService(
             merchantId = merchantId,
             name = name,
             isRequired = request.isRequired ?: true,
+            selectionType = request.selectionType?.uppercase() ?: "SINGLE",
+            minSelection = request.minSelection ?: if (request.isRequired == false) 0 else 1,
+            maxSelection = request.maxSelection ?: 1,
             displayOrder = request.displayOrder ?: 0,
             createdBy = username,
             createdDate = now,
@@ -308,6 +369,9 @@ class ProductService(
 
         group.name = request.name ?: group.name
         group.isRequired = request.isRequired ?: group.isRequired
+        group.selectionType = request.selectionType?.uppercase() ?: group.selectionType
+        group.minSelection = request.minSelection ?: group.minSelection
+        group.maxSelection = request.maxSelection ?: group.maxSelection
         group.displayOrder = request.displayOrder ?: group.displayOrder
         group.modifiedBy = SecurityUtils.getUsernameFromContext()
         group.modifiedDate = LocalDateTime.now()
@@ -365,6 +429,7 @@ class ProductService(
             additionalPrice = request.additionalPrice ?: BigDecimal.ZERO,
             sku = request.sku,
             isStock = isStock,
+            isUnlimitedStock = request.isUnlimitedStock ?: !isStock,
             isDefault = isDefault,
             createdBy = username,
             createdDate = now,
@@ -428,6 +493,7 @@ class ProductService(
         variant.additionalPrice = request.additionalPrice ?: variant.additionalPrice
         variant.sku = request.sku ?: variant.sku
         variant.isStock = request.isStock ?: variant.isStock
+        variant.isUnlimitedStock = request.isUnlimitedStock ?: variant.isUnlimitedStock
         variant.isDefault = request.isDefault ?: variant.isDefault
         variant.modifiedBy = SecurityUtils.getUsernameFromContext()
         variant.modifiedDate = LocalDateTime.now()
@@ -470,17 +536,24 @@ class ProductService(
             ?: throw IllegalArgumentException("name wajib diisi")
         val additionalPrice = request.additionalPrice ?: BigDecimal.ZERO
         val isDefault = request.isDefault ?: false
+        val isStock = request.isStock ?: false
         require(additionalPrice >= BigDecimal.ZERO) { "additionalPrice harus >= 0" }
+        require((request.qty ?: 0) >= 0) { "qty must be greater than or equal to 0" }
 
         val username = SecurityUtils.getUsernameFromContext()
         val now = LocalDateTime.now()
 
         if (isDefault) clearProductModifierDefault(productId)
+        val group = resolveModifierGroup(productId, request, username, now)
 
         val modifier = ProductModifier(
             productId = productId,
+            modifierGroupId = group.id,
             name = name,
             additionalPrice = additionalPrice,
+            isStock = isStock,
+            qty = request.qty ?: 0,
+            isUnlimitedStock = request.isUnlimitedStock ?: !isStock,
             isDefault = isDefault,
             createdBy = username,
             createdDate = now,
@@ -500,12 +573,21 @@ class ProductService(
         request.additionalPrice?.let { require(it >= BigDecimal.ZERO) { "additionalPrice harus >= 0" } }
 
         if (request.isDefault == true && !modifier.isDefault) clearProductModifierDefault(productId)
+        val username = SecurityUtils.getUsernameFromContext()
+        val now = LocalDateTime.now()
+        val group = if (request.modifierGroupId != null || !request.groupName.isNullOrBlank()) {
+            resolveModifierGroup(productId, request, username, now)
+        } else null
 
+        modifier.modifierGroupId = group?.id ?: modifier.modifierGroupId
         modifier.name = request.name ?: modifier.name
         modifier.additionalPrice = request.additionalPrice ?: modifier.additionalPrice
+        modifier.isStock = request.isStock ?: modifier.isStock
+        modifier.qty = request.qty ?: modifier.qty
+        modifier.isUnlimitedStock = request.isUnlimitedStock ?: modifier.isUnlimitedStock
         modifier.isDefault = request.isDefault ?: modifier.isDefault
-        modifier.modifiedBy = SecurityUtils.getUsernameFromContext()
-        modifier.modifiedDate = LocalDateTime.now()
+        modifier.modifiedBy = username
+        modifier.modifiedDate = now
 
         val saved = productModifierRepository.save(modifier)
         return ApiResponse.success("Modifier updated", buildModifierResponse(saved))
@@ -587,12 +669,14 @@ class ProductService(
                         val variantQty = if (v.isStock) allStocks.firstOrNull { it.variantId == v.id }?.qty ?: 0 else 0
                         ProductVariantResponse(
                             id = v.id, name = v.name, additionalPrice = v.additionalPrice,
-                            sku = v.sku, isStock = v.isStock, isDefault = v.isDefault,
+                            sku = v.sku, isStock = v.isStock, isUnlimitedStock = v.isUnlimitedStock || !v.isStock,
+                            isDefault = v.isDefault,
                             qty = variantQty, isActive = v.isActive
                         )
                     }
                     ProductVariantGroupResponse(
                         id = group.id, name = group.name, isRequired = group.isRequired,
+                        selectionType = group.selectionType, minSelection = group.minSelection, maxSelection = group.maxSelection,
                         displayOrder = group.displayOrder, isActive = group.isActive, variants = groupVariants
                     )
                 }
@@ -610,6 +694,9 @@ class ProductService(
             basePrice = basePrice, finalPrice = finalPrice,
             isPriceIncludeTax = paymentSetting?.isPriceIncludeTax == true,
             qty = qty, isActive = product.isActive, isStock = product.isStock,
+            isPriceAdjustable = product.isPriceAdjustable,
+            isUnlimitedStock = product.isUnlimitedStock || !product.isStock,
+            hasModifiers = modifiers.isNotEmpty(),
             merchantName = displayMerchantName(merchant),
             createdDate = product.createdDate, isTaxable = product.isTaxable,
             tax = taxResponse, categories = categories, productImages = emptyList(),
@@ -635,6 +722,66 @@ class ProductService(
 
     private fun resolveBasePrice(product: Product): BigDecimal =
         product.basePrice ?: BigDecimal.ZERO
+
+    private fun buildProductOptionVariantGroups(productId: Long): List<ProductOptionGroupResponse> {
+        val variants = productVariantRepository.findByProductId(productId).filter { it.isActive }
+        if (variants.isEmpty()) return emptyList()
+        val stocksByVariantId = stockRepository.findAllByProductId(productId)
+            .filter { it.variantId != null }
+            .associateBy { it.variantId }
+        val groupsById = productVariantGroupRepository.findAllById(variants.map { it.variantGroupId }.distinct())
+            .associateBy { it.id }
+        return variants.groupBy { it.variantGroupId }
+            .mapNotNull { (groupId, groupVariants) ->
+                val group = groupsById[groupId] ?: return@mapNotNull null
+                ProductOptionGroupResponse(
+                    groupId = group.id,
+                    name = group.name,
+                    isRequired = group.isRequired,
+                    selectionType = group.selectionType,
+                    minSelection = group.minSelection,
+                    maxSelection = group.maxSelection,
+                    options = groupVariants.map { variant ->
+                        ProductOptionResponse(
+                            optionId = variant.id,
+                            groupId = group.id,
+                            name = variant.name,
+                            priceAdjustment = variant.additionalPrice,
+                            isUnlimitedStock = variant.isUnlimitedStock || !variant.isStock,
+                            qty = if (variant.isUnlimitedStock || !variant.isStock) null else stocksByVariantId[variant.id]?.qty ?: 0
+                        )
+                    }
+                )
+            }
+    }
+
+    private fun buildProductOptionModifierGroups(productId: Long): List<ProductOptionGroupResponse> {
+        val modifiers = productModifierRepository.findByProductId(productId).filter { it.isActive }
+        if (modifiers.isEmpty()) return emptyList()
+        val groupsById = productModifierGroupRepository.findByProductId(productId).associateBy { it.id }
+        return modifiers.groupBy { it.modifierGroupId ?: 0L }
+            .map { (groupId, groupModifiers) ->
+                val group = groupsById[groupId]
+                ProductOptionGroupResponse(
+                    groupId = group?.id ?: 0,
+                    name = group?.name ?: "Modifier",
+                    isRequired = group?.isRequired ?: false,
+                    selectionType = group?.selectionType ?: "MULTIPLE",
+                    minSelection = group?.minSelection ?: 0,
+                    maxSelection = group?.maxSelection ?: 0,
+                    options = groupModifiers.map { modifier ->
+                        ProductOptionResponse(
+                            optionId = modifier.id,
+                            groupId = group?.id ?: 0,
+                            name = modifier.name,
+                            priceAdjustment = modifier.additionalPrice,
+                            isUnlimitedStock = modifier.isUnlimitedStock || !modifier.isStock,
+                            qty = if (modifier.isUnlimitedStock || !modifier.isStock) null else modifier.qty
+                        )
+                    }
+                )
+            }
+    }
 
     private fun buildProductResponse(product: Product): ProductResponse {
         val paymentSetting = paymentSettingRepository.findByMerchantId(product.merchantId).orElse(null)
@@ -700,6 +847,9 @@ class ProductService(
             qty = qty,
             isActive = product.isActive,
             isStock = product.isStock,
+            isPriceAdjustable = product.isPriceAdjustable,
+            isUnlimitedStock = product.isUnlimitedStock || !product.isStock,
+            hasModifiers = modifiers.isNotEmpty(),
             merchantName = displayMerchantName(merchant),
             createdDate = product.createdDate,
             isTaxable = product.isTaxable,
@@ -722,6 +872,9 @@ class ProductService(
             id = group.id,
             name = group.name,
             isRequired = group.isRequired,
+            selectionType = group.selectionType,
+            minSelection = group.minSelection,
+            maxSelection = group.maxSelection,
             displayOrder = group.displayOrder,
             isActive = group.isActive,
             variants = variants
@@ -734,6 +887,9 @@ class ProductService(
             id = group.id,
             name = group.name,
             isRequired = group.isRequired,
+            selectionType = group.selectionType,
+            minSelection = group.minSelection,
+            maxSelection = group.maxSelection,
             displayOrder = group.displayOrder,
             isActive = group.isActive,
             variants = emptyList()
@@ -750,6 +906,7 @@ class ProductService(
             additionalPrice = variant.additionalPrice,
             sku = variant.sku,
             isStock = variant.isStock,
+            isUnlimitedStock = variant.isUnlimitedStock || !variant.isStock,
             isDefault = variant.isDefault,
             qty = qty,
             isActive = variant.isActive
@@ -757,10 +914,16 @@ class ProductService(
     }
 
     private fun buildModifierResponse(modifier: ProductModifier): ProductModifierResponse {
+        val group = modifier.modifierGroupId?.let { productModifierGroupRepository.findById(it).orElse(null) }
         return ProductModifierResponse(
             id = modifier.id,
+            modifierGroupId = modifier.modifierGroupId,
+            groupName = group?.name,
             name = modifier.name,
             additionalPrice = modifier.additionalPrice,
+            isStock = modifier.isStock,
+            qty = modifier.qty,
+            isUnlimitedStock = modifier.isUnlimitedStock || !modifier.isStock,
             isDefault = modifier.isDefault,
             isActive = modifier.isActive
         )
@@ -776,6 +939,36 @@ class ProductService(
         val existing = productModifierRepository.findByProductIdAndIsDefaultTrue(productId)
         existing.forEach { it.isDefault = false }
         if (existing.isNotEmpty()) productModifierRepository.saveAll(existing)
+    }
+
+    private fun resolveModifierGroup(
+        productId: Long,
+        request: ModifierRequest,
+        username: String,
+        now: LocalDateTime
+    ): ProductModifierGroup {
+        request.modifierGroupId?.let { groupId ->
+            return productModifierGroupRepository.findById(groupId)
+                .filter { it.productId == productId }
+                .orElseThrow { RuntimeException("Modifier group tidak ditemukan di produk $productId") }
+        }
+
+        val existing = productModifierGroupRepository.findByProductId(productId).firstOrNull()
+        if (existing != null && request.groupName.isNullOrBlank()) return existing
+
+        val group = ProductModifierGroup(
+            productId = productId,
+            name = request.groupName?.takeIf { it.isNotBlank() } ?: "Modifier",
+            isRequired = request.isRequired ?: false,
+            selectionType = request.selectionType?.uppercase() ?: "MULTIPLE",
+            minSelection = request.minSelection ?: 0,
+            maxSelection = request.maxSelection ?: 0,
+            createdBy = username,
+            createdDate = now,
+            modifiedBy = username,
+            modifiedDate = now
+        )
+        return productModifierGroupRepository.save(group)
     }
 
     private fun syncBaseProductStock(product: Product, isStockEnabled: Boolean, username: String, now: LocalDateTime) {

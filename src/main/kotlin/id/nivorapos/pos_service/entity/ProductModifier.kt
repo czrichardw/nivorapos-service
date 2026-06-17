@@ -14,6 +14,9 @@ class ProductModifier(
     @Column(name = "product_id")
     var productId: Long = 0,
 
+    @Column(name = "modifier_group_id")
+    var modifierGroupId: Long? = null,
+
     @Column(name = "name")
     var name: String = "",
 
@@ -25,6 +28,12 @@ class ProductModifier(
 
     @Column(name = "is_stock")
     var isStock: Boolean = false,
+
+    @Column(name = "qty")
+    var qty: Int = 0,
+
+    @Column(name = "is_unlimited_stock")
+    var isUnlimitedStock: Boolean = true,
 
     @Column(name = "is_default")
     var isDefault: Boolean = false,

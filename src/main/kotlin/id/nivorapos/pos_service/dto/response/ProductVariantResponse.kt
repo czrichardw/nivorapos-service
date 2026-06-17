@@ -8,6 +8,7 @@ data class ProductVariantResponse(
     val additionalPrice: BigDecimal,
     val sku: String?,
     val isStock: Boolean,
+    val isUnlimitedStock: Boolean,
     val isDefault: Boolean,
     val qty: Int,
     val isActive: Boolean
@@ -17,6 +18,9 @@ data class ProductVariantGroupResponse(
     val id: Long,
     val name: String,
     val isRequired: Boolean,
+    val selectionType: String,
+    val minSelection: Int,
+    val maxSelection: Int,
     val displayOrder: Int,
     val isActive: Boolean,
     val variants: List<ProductVariantResponse>

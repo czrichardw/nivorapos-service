@@ -1,8 +1,7 @@
 package id.nivorapos.pos_service.controller
 
 import id.nivorapos.pos_service.dto.request.PromotionRequest
-import id.nivorapos.pos_service.dto.response.ApiResponse
-import id.nivorapos.pos_service.dto.response.PromotionResponse
+import id.nivorapos.pos_service.dto.response.*
 import id.nivorapos.pos_service.service.PromotionService
 import org.springframework.http.ResponseEntity
 import org.springframework.security.access.prepost.PreAuthorize
@@ -19,6 +18,16 @@ class PromotionController(
     fun list(): ResponseEntity<ApiResponse<List<PromotionResponse>>> {
         return try {
             ResponseEntity.ok(promotionService.list())
+        } catch (e: Exception) {
+            ResponseEntity.status(400).body(ApiResponse.error(e.message ?: "Failed"))
+        }
+    }
+
+    @GetMapping("/active")
+    @PreAuthorize("hasAuthority('PROMOTION_VIEW')")
+    fun active(): ResponseEntity<ApiResponse<List<PromotionActiveResponse>>> {
+        return try {
+            ResponseEntity.ok(promotionService.active())
         } catch (e: Exception) {
             ResponseEntity.status(400).body(ApiResponse.error(e.message ?: "Failed"))
         }

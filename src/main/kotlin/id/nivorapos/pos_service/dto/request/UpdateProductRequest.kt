@@ -19,5 +19,7 @@ data class UpdateProductRequest(
     val taxId: Long? = null,
     val categoryIds: List<Long>? = null,
     val isActive: Boolean? = null,
-    val isStock: Boolean? = null
+    val isStock: Boolean? = null,
+    val isPriceAdjustable: Boolean? = null,
+    val isUnlimitedStock: Boolean? = null
 )

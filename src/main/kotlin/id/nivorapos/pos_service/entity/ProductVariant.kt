@@ -32,6 +32,9 @@ class ProductVariant(
     @Column(name = "is_stock")
     var isStock: Boolean = true,
 
+    @Column(name = "is_unlimited_stock")
+    var isUnlimitedStock: Boolean = false,
+
     @Column(name = "is_default")
     var isDefault: Boolean = false,
 

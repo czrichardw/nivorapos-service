@@ -15,6 +15,7 @@ data class PaymentSettingResponse(
     val serviceChargePercentage: BigDecimal,
     val serviceChargeAmount: BigDecimal,
     val serviceChargeSource: String?,
+    val receiptFooterText: String?,
     val createdBy: String?,
     val createdDate: LocalDateTime?,
     val modifiedBy: String?,

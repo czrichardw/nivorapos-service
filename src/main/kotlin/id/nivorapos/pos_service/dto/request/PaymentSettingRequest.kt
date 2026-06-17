@@ -11,5 +11,6 @@ data class PaymentSettingRequest(
     val serviceChargePercentage: BigDecimal? = null,
     val serviceChargeAmount: BigDecimal? = null,
     /** BEFORE_TAX | AFTER_TAX | DPP | AFTER_DISCOUNT */
-    val serviceChargeSource: String? = null
+    val serviceChargeSource: String? = null,
+    val receiptFooterText: String? = null
 )

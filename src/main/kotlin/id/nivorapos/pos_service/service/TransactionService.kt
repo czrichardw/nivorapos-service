@@ -28,6 +28,11 @@ class TransactionService(
     private val transactionRepository: TransactionRepository,
     private val transactionItemRepository: TransactionItemRepository,
     private val transactionItemModifierRepository: TransactionItemModifierRepository,
+    private val transactionAppliedPromotionRepository: TransactionAppliedPromotionRepository,
+    private val transactionItemDetailRepository: TransactionItemDetailRepository,
+    private val transactionItemDiscountDetailRepository: TransactionItemDiscountDetailRepository,
+    private val transactionItemPromotionDetailRepository: TransactionItemPromotionDetailRepository,
+    private val transactionItemTaxDetailRepository: TransactionItemTaxDetailRepository,
     private val transactionQueueRepository: TransactionQueueRepository,
     private val paymentRepository: PaymentRepository,
     private val productRepository: ProductRepository,
@@ -38,6 +43,8 @@ class TransactionService(
     private val productVariantRepository: ProductVariantRepository,
     private val productVariantGroupRepository: ProductVariantGroupRepository,
     private val productModifierRepository: ProductModifierRepository,
+    private val productModifierGroupRepository: ProductModifierGroupRepository,
+    private val discountRepository: DiscountRepository,
     private val discountService: DiscountService,
     private val promotionService: PromotionService,
     private val productCategoryRepository: ProductCategoryRepository,
@@ -90,10 +97,12 @@ class TransactionService(
             else productCategoryRepository.findByProductIdIn(productIds)
                 .groupBy({ it.productId }, { it.categoryId })
         val discountItems = request.items.map { itemReq ->
+            val lineGross = lineGrossAmount(itemReq)
+            val unitPrice = if (itemReq.qty > 0) lineGross.divide(BigDecimal(itemReq.qty), 2, RoundingMode.HALF_UP) else parseBD(itemReq.price)
             DiscountValidateItemRequest(
                 productId = itemReq.productId,
                 qty = itemReq.qty,
-                price = parseBD(itemReq.price),
+                price = unitPrice,
                 categoryIds = categoryIdsByProduct[itemReq.productId].orEmpty()
             )
         }
@@ -115,16 +124,19 @@ class TransactionService(
         )
 
         // Auto-apply promotions
-        val (promoAmount, _) = promotionService.autoApply(
+        val (autoPromoAmount, appliedPromotions) = promotionService.autoApply(
             merchantId = merchantId,
             transactionTotal = prelimSubTotal,
             outletId = request.outletId,
             items = discountItems
         )
+        val promoAmount = request.totalPromotionAmount?.let { parseBD(it) } ?: autoPromoAmount
 
         // Pre-fetch all per-item entities once to avoid N+1 in compute/validate and item save
         val taxIds = request.items.asSequence().mapNotNull { it.taxId }.toSet()
-        val variantIds = request.items.asSequence().mapNotNull { it.variantId }.toSet()
+        val variantIds = request.items.asSequence()
+            .flatMap { (listOfNotNull(it.variantId) + it.variantOptionIds).asSequence() }
+            .toSet()
         val modifierIds = request.items.asSequence().flatMap { it.modifierIds.asSequence() }.toSet()
         val taxesById = if (taxIds.isEmpty()) emptyMap()
             else taxRepository.findAllById(taxIds).associateBy { it.id }
@@ -164,6 +176,11 @@ class TransactionService(
         val queueId: Long = transactionQueueRepository.save(queue).id
 
         val isCash = request.paymentMethod?.uppercase() == "CASH"
+        val totalDiscount = discountAmount
+        val totalPromotionAmount = promoAmount
+        val voucherAmount = BigDecimal.ZERO
+        val netAmount = (amounts.subTotal - totalDiscount - totalPromotionAmount - voucherAmount).max(BigDecimal.ZERO)
+        val effectivePriceIncludeTax = request.paymentSetting?.priceIncludeTax ?: request.priceIncludeTax
 
         val transaction = Transaction(
             merchantId = merchantId,
@@ -171,17 +188,28 @@ class TransactionService(
             username = username,
             trxId = trxId,
             transactionOrigin = request.transactionOrigin,
+            notes = request.notes,
             status = if (isCash) "PAID" else "PENDING",
             paymentMethod = request.paymentMethod,
-            priceIncludeTax = request.priceIncludeTax,
+            priceIncludeTax = effectivePriceIncludeTax,
             subTotal = amounts.subTotal,
             totalAmount = amounts.totalAmount,
+            netAmount = netAmount,
+            totalDiscount = totalDiscount,
+            totalPromotionAmount = totalPromotionAmount,
+            voucherAmount = voucherAmount,
+            baseAmount = amounts.baseAmount,
+            variantTotal = amounts.variantTotal,
+            modifierTotal = amounts.modifierTotal,
             serviceChargePercentage = parseBD(request.serviceChargePercentage),
             serviceChargeAmount = parseBD(request.serviceChargeAmount),
             totalServiceCharge = amounts.totalServiceCharge,
             taxPercentage = parseBD(request.taxPercentage),
             totalTax = amounts.totalTax,
             taxName = request.taxName,
+            taxAppliedAfterDiscount = request.paymentSetting?.taxAppliedAfterDiscount,
+            serviceChargeType = request.paymentSetting?.serviceCharge?.type,
+            serviceChargeValue = request.paymentSetting?.serviceCharge?.value?.let { BigDecimal.valueOf(it) },
             totalRounding = amounts.totalRounding,
             roundingType = request.roundingType,
             roundingTarget = request.roundingTarget,
@@ -204,6 +232,12 @@ class TransactionService(
         if (appliedDiscount != null) {
             discountService.recordUsage(appliedDiscount, savedTrx.id, request.customerId)
         }
+        val appliedPromotionIds = (request.appliedPromotionIds + appliedPromotions.map { it.promotionId }).distinct()
+        if (appliedPromotionIds.isNotEmpty()) {
+            transactionAppliedPromotionRepository.saveAll(
+                appliedPromotionIds.map { TransactionAppliedPromotion(transactionId = savedTrx.id, promotionId = it, createdDate = now) }
+            )
+        }
 
         // Save items
         val pendingModifiers = ArrayList<TransactionItemModifier>(request.items.sumOf { it.modifierIds.size })
@@ -211,12 +245,13 @@ class TransactionService(
             val product = productsById[itemReq.productId]
             val tax = itemReq.taxId?.let { taxesById[it] }
             val itemPrice = parseBD(itemReq.price)
-            val totalPrice = itemPrice.multiply(BigDecimal(itemReq.qty))
+            val totalPrice = itemReq.totalPrice?.let { parseBD(it) } ?: itemPrice.multiply(BigDecimal(itemReq.qty))
             val snapshot = if (product != null) objectMapper.writeValueAsString(product) else null
 
             // Resolve variant
-            val variant = itemReq.variantId?.let { variantsById[it] }
-            validateVariantSelection(itemReq.productId, itemReq.variantId)
+            val primaryVariantId = itemReq.variantId ?: itemReq.variantOptionIds.firstOrNull()
+            val variant = primaryVariantId?.let { variantsById[it] }
+            validateVariantSelection(itemReq.productId, primaryVariantId)
 
             // Resolve modifiers
             val selectedModifiers = itemReq.modifierIds.mapNotNull { modifiersById[it] }
@@ -228,10 +263,11 @@ class TransactionService(
             val item = TransactionItem(
                 transactionId = savedTrx.id,
                 productId = itemReq.productId,
-                productName = product?.name ?: "",
+                productName = itemReq.productName ?: product?.name ?: "",
                 price = itemPrice,
                 qty = itemReq.qty,
                 totalPrice = totalPrice,
+                grossLineTotal = lineGrossAmount(itemReq, variantAdditionalPrice, modifiersAdditionalPrice),
                 variantId = variant?.id,
                 variantName = variant?.name,
                 variantAdditionalPrice = variantAdditionalPrice,
@@ -241,12 +277,15 @@ class TransactionService(
                 taxName = tax?.name,
                 taxPercentage = tax?.percentage ?: BigDecimal.ZERO,
                 taxAmount = parseBD(itemReq.taxAmount),
+                isPriceAdjustable = itemReq.isPriceAdjustable ?: product?.isPriceAdjustable ?: false,
+                isPriceOverride = itemReq.isPriceOverride ?: false,
                 createdBy = username,
                 createdDate = now,
                 modifiedBy = username,
                 modifiedDate = now
             )
             val savedItem = transactionItemRepository.save(item)
+            saveItemBreakdowns(savedItem, itemReq, variant, selectedModifiers, tax)
 
             // Collect modifier selections; batch-saved after the loop
             selectedModifiers.forEach { modifier ->
@@ -393,6 +432,12 @@ class TransactionService(
             else transactionItemModifierRepository
                 .findByTransactionItemIdIn(rawItems.map { it.id })
                 .groupBy { it.transactionItemId }
+        val detailsByItemId = if (rawItems.isEmpty()) emptyMap()
+            else transactionItemDetailRepository.findByTransactionItemIdIn(rawItems.map { it.id })
+                .groupBy { it.transactionItemId }
+        val discountsByItemId = if (rawItems.isEmpty()) emptyMap()
+            else transactionItemDiscountDetailRepository.findByTransactionItemIdIn(rawItems.map { it.id })
+                .groupBy { it.transactionItemId }
         val items = rawItems.map { item ->
             val modifiers = modifiersByItemId[item.id].orEmpty().map {
                 TransactionItemModifierResponse(
@@ -401,13 +446,40 @@ class TransactionService(
                     additionalPrice = it.additionalPrice
                 )
             }
+            val detailRows = detailsByItemId[item.id].orEmpty().map {
+                TransactionDetailItemResponse(
+                    detailType = it.detailType,
+                    name = it.name,
+                    groupName = it.groupName,
+                    referenceId = it.referenceId,
+                    groupReferenceId = it.groupReferenceId,
+                    priceAdjustment = it.priceAdjustment,
+                    qty = it.qty,
+                    sortOrder = it.sortOrder
+                )
+            }.ifEmpty {
+                fallbackItemDetails(item, modifiersByItemId[item.id].orEmpty())
+            }
+            val discountRows = discountsByItemId[item.id].orEmpty().map {
+                TransactionItemDiscountDetailResponse(
+                    id = it.discountId,
+                    type = it.valueType,
+                    value = it.value,
+                    amt = it.amount
+                )
+            }
             TransactionItemResponse(
                 productId = item.productId,
                 productName = item.productName,
                 price = item.price,
                 qty = item.qty,
+                grossLineTotal = if (item.grossLineTotal > BigDecimal.ZERO) item.grossLineTotal else item.totalPrice,
                 totalPrice = item.totalPrice,
+                taxName = item.taxName,
+                taxPercentage = item.taxPercentage,
                 taxAmount = item.taxAmount,
+                discounts = discountRows,
+                details = detailRows,
                 variantId = item.variantId,
                 variantName = item.variantName,
                 variantAdditionalPrice = item.variantAdditionalPrice,
@@ -429,6 +501,17 @@ class TransactionService(
                 createdDate = it.createdDate
             )
         }
+        val pricing = buildPricingResponse(transaction, rawItems)
+        val discountInfo = transaction.discountId?.let { discountId ->
+            val discount = discountRepository.findById(discountId).orElse(null)
+            TransactionDiscountInfoResponse(
+                discountId = discountId,
+                discountName = transaction.discountName ?: discount?.name,
+                discountValueType = discount?.valueType,
+                discountValue = discount?.value,
+                discountScope = discount?.scope
+            )
+        }
         return TransactionDetailResponse(
             id = transaction.id,
             code = transaction.trxId,
@@ -448,6 +531,8 @@ class TransactionService(
             roundingTarget = transaction.roundingTarget,
             cashTendered = transaction.cashTendered,
             cashChange = transaction.cashChange,
+            pricing = pricing,
+            discount = discountInfo,
             discountId = transaction.discountId,
             discountCode = transaction.discountCode,
             discountName = transaction.discountName,
@@ -455,6 +540,7 @@ class TransactionService(
             promoAmount = transaction.promoAmount,
             transactionDate = transaction.createdDate?.format(dateFormatter),
             queueNumber = queueNumber,
+            notes = transaction.notes,
             transactionItems = items,
             payments = payments
         )
@@ -478,6 +564,9 @@ class TransactionService(
 
     private data class ComputedAmounts(
         val subTotal: BigDecimal,
+        val baseAmount: BigDecimal,
+        val variantTotal: BigDecimal,
+        val modifierTotal: BigDecimal,
         val totalTax: BigDecimal,
         val totalServiceCharge: BigDecimal,
         val totalRounding: BigDecimal,
@@ -499,11 +588,28 @@ class TransactionService(
         log.debug("[VALIDATE] merchantId=$merchantId paymentMethod=${request.paymentMethod} isPriceIncludeTax=$isPriceIncludeTax items=${request.items.size}")
 
         var calculatedSubTotal = BigDecimal.ZERO
+        var calculatedBaseAmount = BigDecimal.ZERO
+        var calculatedVariantTotal = BigDecimal.ZERO
+        var calculatedModifierTotal = BigDecimal.ZERO
         var calculatedTotalTax = BigDecimal.ZERO
 
         for (itemReq in request.items) {
             val itemPrice = parseBD(itemReq.price)
-            val itemTotalPrice = itemPrice.multiply(BigDecimal(itemReq.qty))
+            val itemBaseAmount = itemPrice.multiply(BigDecimal(itemReq.qty))
+            val detailVariantTotal = itemReq.details
+                .filter { it.detailType.equals("VARIANT", ignoreCase = true) }
+                .fold(BigDecimal.ZERO) { acc, detail ->
+                    acc.add(BigDecimal.valueOf(detail.priceAdjustment).multiply(BigDecimal(detail.qty)))
+                }
+            val detailModifierTotal = itemReq.details
+                .filter { it.detailType.equals("MODIFIER", ignoreCase = true) }
+                .fold(BigDecimal.ZERO) { acc, detail ->
+                    acc.add(BigDecimal.valueOf(detail.priceAdjustment).multiply(BigDecimal(detail.qty)))
+                }
+            val itemTotalPrice = lineGrossAmount(itemReq)
+            calculatedBaseAmount = calculatedBaseAmount.add(itemBaseAmount)
+            calculatedVariantTotal = calculatedVariantTotal.add(detailVariantTotal)
+            calculatedModifierTotal = calculatedModifierTotal.add(detailModifierTotal)
             calculatedSubTotal = calculatedSubTotal.add(itemTotalPrice)
 
             val clientTaxAmount = parseBD(itemReq.taxAmount)
@@ -618,11 +724,196 @@ class TransactionService(
 
         return Pair(null, ComputedAmounts(
             subTotal = calculatedSubTotal,
+            baseAmount = calculatedBaseAmount,
+            variantTotal = calculatedVariantTotal,
+            modifierTotal = calculatedModifierTotal,
             totalTax = calculatedTotalTax,
             totalServiceCharge = expectedServiceCharge,
             totalRounding = expectedRounding,
             totalAmount = expectedTotalAmount
         ))
+    }
+
+    private fun lineGrossAmount(
+        itemReq: id.nivorapos.pos_service.dto.request.TransactionItemRequest,
+        variantAdditionalPrice: BigDecimal? = null,
+        modifiersAdditionalPrice: BigDecimal? = null
+    ): BigDecimal {
+        itemReq.totalPrice?.let { return parseBD(it) }
+        val base = parseBD(itemReq.price).multiply(BigDecimal(itemReq.qty))
+        if (itemReq.details.isNotEmpty()) {
+            val detailsTotal = itemReq.details.fold(BigDecimal.ZERO) { acc, detail ->
+                acc.add(BigDecimal.valueOf(detail.priceAdjustment).multiply(BigDecimal(detail.qty)))
+            }
+            return base.add(detailsTotal)
+        }
+        val variantTotal = (variantAdditionalPrice ?: BigDecimal.ZERO).multiply(BigDecimal(itemReq.qty))
+        val modifierTotal = (modifiersAdditionalPrice ?: BigDecimal.ZERO).multiply(BigDecimal(itemReq.qty))
+        return base.add(variantTotal).add(modifierTotal)
+    }
+
+    private fun saveItemBreakdowns(
+        savedItem: TransactionItem,
+        itemReq: id.nivorapos.pos_service.dto.request.TransactionItemRequest,
+        variant: ProductVariant?,
+        selectedModifiers: List<ProductModifier>,
+        tax: Tax?
+    ) {
+        val explicitDetails = itemReq.details.map {
+            TransactionItemDetail(
+                transactionItemId = savedItem.id,
+                detailType = it.detailType.uppercase(),
+                name = it.name,
+                groupName = it.groupName,
+                referenceId = it.referenceId,
+                groupReferenceId = it.groupReferenceId,
+                priceAdjustment = BigDecimal.valueOf(it.priceAdjustment),
+                qty = it.qty,
+                sortOrder = it.sortOrder
+            )
+        }
+        val synthesizedDetails = if (explicitDetails.isEmpty()) {
+            val rows = mutableListOf<TransactionItemDetail>()
+            variant?.let {
+                val group = productVariantGroupRepository.findById(it.variantGroupId).orElse(null)
+                rows += TransactionItemDetail(
+                    transactionItemId = savedItem.id,
+                    detailType = "VARIANT",
+                    name = it.name,
+                    groupName = group?.name,
+                    referenceId = it.id,
+                    groupReferenceId = it.variantGroupId,
+                    priceAdjustment = it.additionalPrice,
+                    qty = 1,
+                    sortOrder = 0
+                )
+            }
+            selectedModifiers.forEachIndexed { index, modifier ->
+                val group = modifier.modifierGroupId?.let { productModifierGroupRepository.findById(it).orElse(null) }
+                rows += TransactionItemDetail(
+                    transactionItemId = savedItem.id,
+                    detailType = "MODIFIER",
+                    name = modifier.name,
+                    groupName = group?.name ?: "Modifier",
+                    referenceId = modifier.id,
+                    groupReferenceId = modifier.modifierGroupId,
+                    priceAdjustment = modifier.additionalPrice,
+                    qty = 1,
+                    sortOrder = index + 1
+                )
+            }
+            rows
+        } else explicitDetails
+        if (synthesizedDetails.isNotEmpty()) transactionItemDetailRepository.saveAll(synthesizedDetails)
+
+        if (itemReq.discounts.isNotEmpty()) {
+            transactionItemDiscountDetailRepository.saveAll(itemReq.discounts.map {
+                TransactionItemDiscountDetail(
+                    transactionItemId = savedItem.id,
+                    discountId = it.id,
+                    valueType = it.type,
+                    value = it.value?.let { value -> BigDecimal.valueOf(value) },
+                    amount = parseBD(it.amt)
+                )
+            })
+        }
+        if (itemReq.promotions.isNotEmpty()) {
+            transactionItemPromotionDetailRepository.saveAll(itemReq.promotions.map {
+                TransactionItemPromotionDetail(
+                    transactionItemId = savedItem.id,
+                    promotionId = it.id,
+                    promoType = it.type,
+                    amount = parseBD(it.amt),
+                    meta = it.meta?.let { meta -> objectMapper.writeValueAsString(meta) }
+                )
+            })
+        }
+        val taxRows = if (itemReq.taxes.isNotEmpty()) {
+            itemReq.taxes.map {
+                TransactionItemTaxDetail(
+                    transactionItemId = savedItem.id,
+                    taxId = it.id,
+                    valueType = it.type,
+                    value = it.value?.let { value -> BigDecimal.valueOf(value) },
+                    amount = parseBD(it.amt)
+                )
+            }
+        } else if (savedItem.taxAmount > BigDecimal.ZERO || savedItem.taxId != null) {
+            listOf(
+                TransactionItemTaxDetail(
+                    transactionItemId = savedItem.id,
+                    taxId = savedItem.taxId,
+                    valueType = "PERCENTAGE",
+                    value = tax?.percentage ?: savedItem.taxPercentage,
+                    amount = savedItem.taxAmount
+                )
+            )
+        } else emptyList()
+        if (taxRows.isNotEmpty()) transactionItemTaxDetailRepository.saveAll(taxRows)
+    }
+
+    private fun fallbackItemDetails(
+        item: TransactionItem,
+        modifiers: List<TransactionItemModifier>
+    ): List<TransactionDetailItemResponse> {
+        val rows = mutableListOf<TransactionDetailItemResponse>()
+        item.variantId?.let {
+            rows += TransactionDetailItemResponse(
+                detailType = "VARIANT",
+                name = item.variantName ?: "",
+                groupName = null,
+                referenceId = it,
+                groupReferenceId = null,
+                priceAdjustment = item.variantAdditionalPrice,
+                qty = 1,
+                sortOrder = 0
+            )
+        }
+        modifiers.forEachIndexed { index, modifier ->
+            rows += TransactionDetailItemResponse(
+                detailType = "MODIFIER",
+                name = modifier.modifierName,
+                groupName = "Modifier",
+                referenceId = modifier.modifierId,
+                groupReferenceId = null,
+                priceAdjustment = modifier.additionalPrice,
+                qty = 1,
+                sortOrder = index + 1
+            )
+        }
+        return rows
+    }
+
+    private fun buildPricingResponse(transaction: Transaction, items: List<TransactionItem>): TransactionPricingResponse {
+        val fallbackBase = items.fold(BigDecimal.ZERO) { acc, item -> acc.add(item.price.multiply(BigDecimal(item.qty))) }
+        val fallbackVariant = items.fold(BigDecimal.ZERO) { acc, item -> acc.add(item.variantAdditionalPrice.multiply(BigDecimal(item.qty))) }
+        val fallbackModifier = items.fold(BigDecimal.ZERO) { acc, item -> acc.add(item.modifiersAdditionalPrice.multiply(BigDecimal(item.qty))) }
+        val baseAmount = transaction.baseAmount.takeIf { it > BigDecimal.ZERO } ?: fallbackBase
+        val variantTotal = transaction.variantTotal.takeIf { it > BigDecimal.ZERO } ?: fallbackVariant
+        val modifierTotal = transaction.modifierTotal.takeIf { it > BigDecimal.ZERO } ?: fallbackModifier
+        val discountTotal = transaction.totalDiscount.takeIf { it > BigDecimal.ZERO } ?: transaction.discountAmount
+        val promotionTotal = transaction.totalPromotionAmount.takeIf { it > BigDecimal.ZERO } ?: transaction.promoAmount
+        val voucherTotal = transaction.voucherAmount
+        val grossAmount = transaction.subTotal.takeIf { it > BigDecimal.ZERO } ?: baseAmount.add(variantTotal).add(modifierTotal)
+        val netAmount = transaction.netAmount.takeIf { it > BigDecimal.ZERO }
+            ?: (grossAmount - discountTotal - promotionTotal - voucherTotal).max(BigDecimal.ZERO)
+        return TransactionPricingResponse(
+            baseAmount = baseAmount,
+            variantTotal = variantTotal,
+            modifierTotal = modifierTotal,
+            grossAmount = grossAmount,
+            discountTotal = discountTotal,
+            promotionTotal = promotionTotal,
+            voucherTotal = voucherTotal,
+            netAmount = netAmount,
+            serviceChargePercentage = transaction.serviceChargePercentage,
+            serviceChargeTotal = transaction.totalServiceCharge,
+            taxTotal = transaction.totalTax,
+            roundingType = transaction.roundingType ?: "NONE",
+            roundingTarget = transaction.roundingTarget ?: "0",
+            roundingTotal = transaction.totalRounding,
+            totalAmount = transaction.totalAmount
+        )
     }
 
     private fun calculateRounding(amount: BigDecimal, roundingType: String?, roundingTarget: Int): BigDecimal {

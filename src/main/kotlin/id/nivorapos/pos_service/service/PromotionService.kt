@@ -22,6 +22,8 @@ class PromotionService(
     private val promotionRewardProductRepository: PromotionRewardProductRepository,
     private val promotionRewardCategoryRepository: PromotionRewardCategoryRepository,
     private val promotionOutletRepository: PromotionOutletRepository,
+    private val productRepository: ProductRepository,
+    private val categoryRepository: CategoryRepository,
     private val psgsCredentialService: PsgsCredentialService
 ) {
 
@@ -51,6 +53,44 @@ class PromotionService(
         val promo = promotionRepository.findByIdAndMerchantIdAndDeletedDateIsNull(id, merchantId)
             .orElseThrow { RuntimeException("Promosi tidak ditemukan") }
         return ApiResponse.success("Promotion found", buildResponse(promo))
+    }
+
+    fun active(): ApiResponse<List<PromotionActiveResponse>> {
+        val merchantId = SecurityUtils.getMerchantIdFromContext()
+        val now = LocalDateTime.now()
+        val today = now.dayOfWeek.name
+        val promos = promotionRepository.findByMerchantIdAndDeletedDateIsNullOrderByPriorityAsc(merchantId)
+            .filter {
+                it.isActive &&
+                    (it.startDate == null || !it.startDate!!.isAfter(now)) &&
+                    (it.endDate == null || !it.endDate!!.isBefore(now)) &&
+                    (it.channel == "POS" || it.channel == "BOTH") &&
+                    (it.validDays.isNullOrBlank() || today in it.validDays!!.split(",").map { day -> day.trim().uppercase() })
+            }
+        if (promos.isEmpty()) return ApiResponse.success("Active promotions retrieved", emptyList())
+
+        val ids = promos.map { it.id }
+        val buyProductsByPromo = promotionBuyProductRepository.findByPromotionIdIn(ids).groupBy { it.promotionId }.mapValues { (_, v) -> v.map { it.productId } }
+        val buyCategoryByPromo = promotionBuyCategoryRepository.findByPromotionIdIn(ids).groupBy { it.promotionId }.mapValues { (_, v) -> v.map { it.categoryId } }
+        val rewardProductsByPromo = promotionRewardProductRepository.findByPromotionIdIn(ids).groupBy { it.promotionId }.mapValues { (_, v) -> v.map { it.productId } }
+        val rewardCategoryByPromo = promotionRewardCategoryRepository.findByPromotionIdIn(ids).groupBy { it.promotionId }.mapValues { (_, v) -> v.map { it.categoryId } }
+        val allProductIds = (buyProductsByPromo.values + rewardProductsByPromo.values).flatten().distinct()
+        val allCategoryIds = (buyCategoryByPromo.values + rewardCategoryByPromo.values).flatten().distinct()
+        val productsById = if (allProductIds.isEmpty()) emptyMap() else productRepository.findAllById(allProductIds).associateBy { it.id }
+        val categoriesById = if (allCategoryIds.isEmpty()) emptyMap() else categoryRepository.findAllById(allCategoryIds).associateBy { it.id }
+
+        val responses = promos.map {
+            buildActiveResponse(
+                it,
+                buyProductsByPromo[it.id].orEmpty(),
+                buyCategoryByPromo[it.id].orEmpty(),
+                rewardProductsByPromo[it.id].orEmpty(),
+                rewardCategoryByPromo[it.id].orEmpty(),
+                productsById,
+                categoriesById
+            )
+        }
+        return ApiResponse.success("Active promotions retrieved", responses)
     }
 
     @Transactional
@@ -92,6 +132,8 @@ class PromotionService(
             channel = channel,
             visibility = visibility,
             validDays = if (validDays.isEmpty()) null else validDays.joinToString(",").uppercase(),
+            startTime = request.startTime,
+            endTime = request.endTime,
             startDate = request.startDate,
             endDate = request.endDate,
             createdBy = username,
@@ -135,6 +177,8 @@ class PromotionService(
             visibility = request.visibility ?: promo.visibility,
             outletIds = request.outletIds ?: promotionOutletRepository.findByPromotionId(id).map { it.outletId },
             validDays = request.validDays ?: promo.validDays?.split(",")?.map { it.trim() }.orEmpty(),
+            startTime = request.startTime ?: promo.startTime,
+            endTime = request.endTime ?: promo.endTime,
             startDate = request.startDate ?: promo.startDate,
             endDate = request.endDate ?: promo.endDate
         )
@@ -160,6 +204,8 @@ class PromotionService(
         promo.channel = merged.channel!!.uppercase()
         promo.visibility = merged.visibility!!.uppercase()
         promo.validDays = if (merged.validDays.orEmpty().isEmpty()) null else merged.validDays!!.joinToString(",").uppercase()
+        promo.startTime = merged.startTime
+        promo.endTime = merged.endTime
         promo.startDate = merged.startDate
         promo.endDate = merged.endDate
         promo.modifiedBy = SecurityUtils.getUsernameFromContext()
@@ -243,6 +289,8 @@ class PromotionService(
             val days = promo.validDays!!.split(",").map { it.trim().uppercase() }
             if (today.name !in days) return false
         }
+        promo.startTime?.let { if (now.toLocalTime().isBefore(it)) return false }
+        promo.endTime?.let { if (now.toLocalTime().isAfter(it)) return false }
         if (promo.channel !in listOf("POS", "BOTH")) return false
         if (!isOutletEligible(promo, outletId)) return false
         if (transactionTotal < promo.minPurchase) return false
@@ -660,8 +708,60 @@ class PromotionService(
             visibility = promo.visibility,
             outletIds = outletIds,
             validDays = validDays,
+            startTime = promo.startTime,
+            endTime = promo.endTime,
             startDate = promo.startDate,
             endDate = promo.endDate
+        )
+    }
+
+    private fun buildActiveResponse(
+        promo: Promotion,
+        buyProductIds: List<Long>,
+        buyCategoryIds: List<Long>,
+        rewardProductIds: List<Long>,
+        rewardCategoryIds: List<Long>,
+        productsById: Map<Long, Product>,
+        categoriesById: Map<Long, Category>
+    ): PromotionActiveResponse {
+        val activeDays = if (promo.validDays.isNullOrBlank()) emptyList()
+            else promo.validDays!!.split(",").map { it.trim() }
+        val startDate = promo.startDate?.toLocalDate()?.toString()
+        val endDate = promo.endDate?.toLocalDate()?.toString()
+        return PromotionActiveResponse(
+            id = promo.id,
+            name = promo.name,
+            promoType = promo.promoType,
+            priority = promo.priority,
+            canCombine = promo.canCombine,
+            valueType = promo.valueType,
+            value = promo.value,
+            maxDiscountAmount = promo.maxDiscountAmount,
+            minimumSubtotal = promo.minPurchase,
+            buyQty = promo.buyQty,
+            rewardQty = promo.getQty,
+            rewardType = promo.rewardType,
+            rewardValue = promo.rewardValue,
+            rewardValueType = promo.rewardType,
+            rewardDiscountValue = promo.rewardValue,
+            isMultiplied = promo.isMultiplied,
+            buyProductIds = buyProductIds,
+            buyCategoryIds = buyCategoryIds,
+            rewardProductIds = rewardProductIds,
+            rewardCategoryIds = rewardCategoryIds,
+            buyProducts = buyProductIds.mapNotNull { productsById[it]?.let { product -> NamedRefResponse(product.id, product.name) } },
+            rewardProducts = rewardProductIds.mapNotNull { productsById[it]?.let { product -> NamedRefResponse(product.id, product.name) } },
+            buyCategories = buyCategoryIds.mapNotNull { categoriesById[it]?.let { category -> NamedRefResponse(category.id, category.name) } },
+            rewardCategories = rewardCategoryIds.mapNotNull { categoriesById[it]?.let { category -> NamedRefResponse(category.id, category.name) } },
+            schedule = PromotionScheduleResponse(
+                startDate = startDate,
+                endDate = endDate,
+                activeDays = activeDays,
+                startTime = promo.startTime?.toString(),
+                endTime = promo.endTime?.toString()
+            ),
+            startDate = startDate,
+            endDate = endDate
         )
     }
 }

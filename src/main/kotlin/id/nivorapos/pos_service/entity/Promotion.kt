@@ -3,6 +3,7 @@ package id.nivorapos.pos_service.entity
 import jakarta.persistence.*
 import java.math.BigDecimal
 import java.time.LocalDateTime
+import java.time.LocalTime
 
 @Entity
 @Table(name = "promotion")
@@ -82,6 +83,12 @@ class Promotion(
     /** Comma-separated days: MONDAY,TUESDAY,... (null = semua hari) */
     @Column(name = "valid_days")
     var validDays: String? = null,
+
+    @Column(name = "start_time")
+    var startTime: LocalTime? = null,
+
+    @Column(name = "end_time")
+    var endTime: LocalTime? = null,
 
     @Column(name = "start_date")
     var startDate: LocalDateTime? = null,

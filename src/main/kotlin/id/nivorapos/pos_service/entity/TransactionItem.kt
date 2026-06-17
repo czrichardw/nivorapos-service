@@ -29,6 +29,9 @@ class TransactionItem(
     @Column(name = "total_price", precision = 19, scale = 2)
     var totalPrice: BigDecimal = BigDecimal.ZERO,
 
+    @Column(name = "gross_line_total", precision = 19, scale = 2)
+    var grossLineTotal: BigDecimal = BigDecimal.ZERO,
+
     @Column(name = "variant_id")
     var variantId: Long? = null,
 
@@ -55,6 +58,12 @@ class TransactionItem(
 
     @Column(name = "tax_amount", precision = 19, scale = 2)
     var taxAmount: BigDecimal = BigDecimal.ZERO,
+
+    @Column(name = "is_price_adjustable")
+    var isPriceAdjustable: Boolean = false,
+
+    @Column(name = "is_price_override")
+    var isPriceOverride: Boolean = false,
 
     @Column(name = "created_by")
     var createdBy: String? = null,
